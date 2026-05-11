@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import HomePage from "./pages/HomePage";
 import RecipeDetailPage from "./pages/RecipeDetailPage";
 import Navbar from "./components/Navbar";
+import HandCursor from "./components/HandCursor";
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -16,6 +17,7 @@ export default function App() {
   return (
     <Router>
       <ScrollToTop />
+      <HandCursor />
       <div className="selection:bg-black selection:text-white">
         <Navbar />
         <Routes>

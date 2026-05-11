@@ -1,6 +1,6 @@
 {
   "name": "Noir Cuisine",
   "description": "A minimalist recipe collection featuring high-contrast black and white design, stunning food photography, and an immersive step-by-step cooking experience.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": ["camera"],
   "majorCapabilities": []
 }
