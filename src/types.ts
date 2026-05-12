@@ -1,6 +1,6 @@
 export interface CookingStep {
   id: number;
-  description: string;
+  description: string[];
   image: string;
 }
 

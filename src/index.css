@@ -11,3 +11,20 @@
     @apply bg-white text-black;
   }
 }
+
+.hide-cursor, .hide-cursor * {
+  cursor: none !important;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Temporarily disables snapping during dragging to prevent snap-back loop */
+.is-fist-scrolling * {
+  scroll-snap-type: none !important;
+}
