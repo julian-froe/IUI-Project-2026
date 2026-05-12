@@ -1,20 +1,81 @@
-import { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import { motion, useInView } from "motion/react";
 import { recipes } from "../data";
 import { CookingStep } from "../types";
 import { ArrowLeft, Clock, BarChart, ChevronDown } from "lucide-react";
+import { useHandMode } from "../context/HandModeContext";
+
+interface StepContentProps {
+  step: CookingStep;
+}
+
+const StepContent: React.FC<StepContentProps> = ({ step }) => {
+  const ref = useRef(null);
+  const isInView = useInView(ref, { margin: "-45% 0px -45% 0px" });
+
+  useEffect(() => {
+    if (isInView) {
+      window.dispatchEvent(new CustomEvent('stepChange', { detail: step.id }));
+    }
+  }, [isInView, step.id]);
+
+  return (
+    <div ref={ref} className={`transition-opacity duration-500 pb-20 ${isInView ? 'opacity-100' : 'opacity-20'}`}>
+      <div className="flex items-start gap-8">
+        <span className="text-8xl font-black tracking-tighter opacity-10 leading-none">
+          {step.id < 10 ? `0${step.id}` : step.id}
+        </span>
+        <div className="pt-4">
+          <p className="text-3xl md:text-5xl font-bold leading-tight uppercase transition-all">
+            {step.description}
+          </p>
+        </div>
+      </div>
+      <div className="lg:hidden mt-12 grayscale shadow-2xl">
+        <img src={step.image} alt={`Step ${step.id}`} className="w-full aspect-video object-cover" referrerPolicy="no-referrer" />
+      </div>
+    </div>
+  );
+};
+
+interface StepImageProps {
+  step: CookingStep;
+  activeStep: number;
+}
+
+const StepImage: React.FC<StepImageProps> = ({ step, activeStep }) => {
+  const isActive = activeStep === step.id;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: isActive ? 1 : 0 }}
+      transition={{ duration: 0.8, ease: "easeInOut" }}
+      className="absolute inset-0"
+    >
+      <img 
+        src={step.image} 
+        alt={`Step ${step.id}`} 
+        className="w-full h-full object-cover"
+        referrerPolicy="no-referrer"
+      />
+      <div className="absolute inset-0 bg-black/20" />
+    </motion.div>
+  );
+};
 
 export default function RecipeDetailPage() {
   const { id } = useParams();
   const recipe = recipes.find((r) => r.id === id);
   const containerRef = useRef(null);
   const [activeStep, setActiveStep] = useState(1);
+  const { isHandModeEnabled } = useHandMode();
 
   useEffect(() => {
-    const handler = (e: any) => setActiveStep(e.detail);
-    window.addEventListener('stepChange', handler as EventListener);
-    return () => window.removeEventListener('stepChange', handler as EventListener);
+    const handler = ((e: CustomEvent) => setActiveStep(e.detail)) as EventListener;
+    window.addEventListener('stepChange', handler);
+    return () => window.removeEventListener('stepChange', handler);
   }, []);
 
   if (!recipe) {
@@ -41,7 +102,7 @@ export default function RecipeDetailPage() {
         </div>
 
         <div className="relative z-10 mt-auto p-6 md:p-12 mb-10 max-w-7xl w-full mx-auto">
-          <Link to="/" className="inline-flex items-center gap-2 mb-12 hover:line-through uppercase font-bold tracking-widest text-xs transition-all">
+          <Link to="/" className={`inline-flex items-center gap-2 mb-12 hover:line-through uppercase font-bold tracking-widest transition-all shadow-xl ${isHandModeEnabled ? "text-lg px-8 py-4 bg-white text-black" : "text-xs px-4 py-2 bg-white/80 backdrop-blur-md text-black"}`}>
             <ArrowLeft className="w-4 h-4" /> Go Back
           </Link>
           
@@ -51,15 +112,15 @@ export default function RecipeDetailPage() {
             transition={{ duration: 1, ease: [0.22, 1, 0.36, 1] }}
           >
             <div className="flex gap-4 mb-4 flex-wrap">
-              <span className="px-3 py-1 bg-black text-white text-[10px] uppercase font-bold tracking-widest flex items-center gap-2">
+              <span className={`bg-black text-white uppercase font-bold tracking-widest flex items-center gap-2 ${isHandModeEnabled ? "px-6 py-3 text-sm" : "px-3 py-1 text-[10px]"}`}>
                 <Clock className="w-3 h-3" /> {recipe.prepTime}
               </span>
-              <span className="px-3 py-1 border border-black text-[10px] uppercase font-bold tracking-widest flex items-center gap-2">
+              <span className={`border border-black bg-white/50 backdrop-blur-sm uppercase font-bold tracking-widest flex items-center gap-2 ${isHandModeEnabled ? "px-6 py-3 text-sm" : "px-3 py-1 text-[10px]"}`}>
                 <BarChart className="w-3 h-3" /> {recipe.difficulty}
               </span>
             </div>
             
-            <h1 className="text-[12vw] md:text-[8vw] leading-[0.8] font-black uppercase tracking-tighter mb-8 max-w-4xl">
+            <h1 className="text-[12vw] md:text-[8vw] leading-[0.8] font-black uppercase tracking-tighter mb-8 max-w-4xl text-black drop-shadow-sm">
               {recipe.title}
             </h1>
           </motion.div>
@@ -91,9 +152,9 @@ export default function RecipeDetailPage() {
           </h2>
           <ul className="space-y-6">
             {recipe.ingredients.map((ing, i) => (
-              <li key={i} className="flex justify-between items-end border-b border-black/5 pb-4 group hover:border-black transition-colors">
-                <span className="text-xl font-bold uppercase transition-all group-hover:italic">{ing.item}</span>
-                <span className="font-mono text-sm opacity-40">{ing.amount}</span>
+              <li key={i} className={`flex justify-between items-end border-b border-black/5 group hover:border-black transition-colors ${isHandModeEnabled ? "pb-8" : "pb-4"}`}>
+                <span className={`font-bold uppercase transition-all group-hover:italic ${isHandModeEnabled ? "text-3xl" : "text-xl"}`}>{ing.item}</span>
+                <span className={`font-mono opacity-40 ${isHandModeEnabled ? "text-lg" : "text-sm"}`}>{ing.amount}</span>
               </li>
             ))}
           </ul>
@@ -105,13 +166,15 @@ export default function RecipeDetailPage() {
         <div className="max-w-7xl mx-auto px-6 py-32 grid grid-cols-1 lg:grid-cols-2 gap-20 relative">
           
           {/* Scroll Area */}
-          <div className="space-y-[40vh]">
+          <div className={`space-y-[40vh] ${isHandModeEnabled ? "snap-y snap-mandatory" : ""}`}>
              <h2 className="text-sm font-black uppercase tracking-[0.3em] mb-20 sticky top-32 z-10 bg-neutral-50/80 backdrop-blur py-4 flex items-center gap-4">
                The Ritual <div className="h-[1px] flex-1 bg-black" />
              </h2>
              
              {recipe.steps.map((step) => (
-               <StepContent key={step.id} step={step} />
+               <div key={step.id} className="snap-center pt-20">
+                 <StepContent step={step} />
+               </div>
              ))}
              <div className="h-[40vh]" />
           </div>
@@ -133,10 +196,10 @@ export default function RecipeDetailPage() {
           Mastered <br /> The Craft?
         </h2>
         <div className="flex flex-col md:flex-row justify-center gap-6">
-          <button className="px-12 py-6 bg-white text-black font-black uppercase text-lg tracking-widest hover:bg-neutral-200 transition-all">
+          <button className={`bg-white text-black font-black uppercase tracking-widest hover:bg-neutral-200 transition-all ${isHandModeEnabled ? "px-24 py-12 text-2xl" : "px-12 py-6 text-lg"}`}>
             Share Your Noir
           </button>
-          <Link to="/" className="px-12 py-6 border border-white text-white font-black uppercase text-lg tracking-widest hover:bg-white hover:text-black transition-all">
+          <Link to="/" className={`border border-white text-white font-black uppercase tracking-widest hover:bg-white hover:text-black transition-all ${isHandModeEnabled ? "px-24 py-12 text-2xl" : "px-12 py-6 text-lg"}`}>
             Next Recipe
           </Link>
         </div>
@@ -145,55 +208,5 @@ export default function RecipeDetailPage() {
         </p>
       </footer>
     </div>
-  );
-}
-
-function StepContent({ step }: { step: CookingStep }) {
-  const ref = useRef(null);
-  const isInView = useInView(ref, { margin: "-45% 0px -45% 0px" });
-
-  useEffect(() => {
-    if (isInView) {
-      window.dispatchEvent(new CustomEvent('stepChange', { detail: step.id }));
-    }
-  }, [isInView, step.id]);
-
-  return (
-    <div ref={ref} className={`transition-opacity duration-500 pb-20 ${isInView ? 'opacity-100' : 'opacity-20'}`}>
-      <div className="flex items-start gap-8">
-        <span className="text-8xl font-black tracking-tighter opacity-10 leading-none">
-          {step.id < 10 ? `0${step.id}` : step.id}
-        </span>
-        <div className="pt-4">
-          <p className="text-3xl md:text-5xl font-bold leading-tight uppercase transition-all">
-            {step.description}
-          </p>
-        </div>
-      </div>
-      <div className="lg:hidden mt-12 grayscale shadow-2xl">
-        <img src={step.image} alt={`Step ${step.id}`} className="w-full aspect-video object-cover" referrerPolicy="no-referrer" />
-      </div>
-    </div>
-  );
-}
-
-function StepImage({ step, activeStep }: { step: CookingStep; activeStep: number }) {
-  const isActive = activeStep === step.id;
-
-  return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: isActive ? 1 : 0 }}
-      transition={{ duration: 0.8, ease: "easeInOut" }}
-      className="absolute inset-0"
-    >
-      <img 
-        src={step.image} 
-        alt={`Step ${step.id}`} 
-        className="w-full h-full object-cover"
-        referrerPolicy="no-referrer"
-      />
-      <div className="absolute inset-0 bg-black/20" />
-    </motion.div>
   );
 }

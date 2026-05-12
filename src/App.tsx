@@ -4,6 +4,7 @@ import HomePage from "./pages/HomePage";
 import RecipeDetailPage from "./pages/RecipeDetailPage";
 import Navbar from "./components/Navbar";
 import HandCursor from "./components/HandCursor";
+import { HandModeProvider } from "./context/HandModeContext";
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -15,16 +16,18 @@ function ScrollToTop() {
 
 export default function App() {
   return (
-    <Router>
-      <ScrollToTop />
-      <HandCursor />
-      <div className="selection:bg-black selection:text-white">
-        <Navbar />
-        <Routes>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/recipe/:id" element={<RecipeDetailPage />} />
-        </Routes>
-      </div>
-    </Router>
+    <HandModeProvider>
+      <Router>
+        <ScrollToTop />
+        <HandCursor />
+        <div className="selection:bg-black selection:text-white">
+          <Navbar />
+          <Routes>
+            <Route path="/" element={<HomePage />} />
+            <Route path="/recipe/:id" element={<RecipeDetailPage />} />
+          </Routes>
+        </div>
+      </Router>
+    </HandModeProvider>
   );
 }

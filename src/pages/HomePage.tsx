@@ -1,8 +1,11 @@
 import { recipes } from "../data";
 import RecipeCard from "../components/RecipeCard";
 import { motion } from "motion/react";
+import { useHandMode } from "../context/HandModeContext";
 
 export default function HomePage() {
+  const { isHandModeEnabled } = useHandMode();
+
   return (
     <div className="min-h-screen pt-32 pb-20 px-6 max-w-7xl mx-auto">
       <header className="mb-20 space-y-8">
@@ -20,7 +23,7 @@ export default function HomePage() {
           transition={{ delay: 1 }}
           className="font-mono text-[10px] tracking-[0.4em] uppercase"
         >
-          [ Use Hand to Navigate & Pinch to Select ]
+          [ {isHandModeEnabled ? "Pinch and Dwell to Select — Move quickly while pinching to Scroll" : "Use Hand to Navigate & Pinch to Select"} ]
         </motion.div>
         
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-8">
@@ -29,10 +32,10 @@ export default function HomePage() {
           </p>
           
           <div className="flex gap-4">
-            <button className="px-8 py-4 border border-black hover:bg-black hover:text-white transition-all uppercase font-sans font-bold text-sm tracking-widest">
+            <button className={`border border-black hover:bg-black hover:text-white transition-all uppercase font-sans font-bold tracking-widest ${isHandModeEnabled ? "px-12 py-8 text-lg" : "px-8 py-4 text-sm"}`}>
               Most Popular
             </button>
-            <button className="px-8 py-4 bg-black text-white hover:bg-neutral-800 transition-all uppercase font-sans font-bold text-sm tracking-widest">
+            <button className={`bg-black text-white hover:bg-neutral-800 transition-all uppercase font-sans font-bold tracking-widest ${isHandModeEnabled ? "px-12 py-8 text-lg" : "px-8 py-4 text-sm"}`}>
               All Recipes
             </button>
           </div>
