@@ -85,8 +85,8 @@ export default function HandCursor() {
       filter.Q.setValueAtTime(0.45, startTime);
 
       gain.gain.setValueAtTime(0.0001, startTime);
-      gain.gain.exponentialRampToValueAtTime(0.038, startTime + 0.004);
-      gain.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.055);
+      gain.gain.exponentialRampToValueAtTime(0.090, startTime + 0.004);
+      gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.055);
 
       osc.connect(filter);
       filter.connect(gain);
@@ -118,8 +118,8 @@ export default function HandCursor() {
       filter.Q.setValueAtTime(0.5, ctx.currentTime);
 
       gain.gain.setValueAtTime(0.0001, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.075, ctx.currentTime + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.18);
+      gain.gain.exponentialRampToValueAtTime(0.090, ctx.currentTime + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
 
       osc.connect(filter);
       filter.connect(gain);
