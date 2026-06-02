@@ -1,7 +1,4 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import * as mpHands from "@mediapipe/hands";
-import type { Results } from "@mediapipe/hands";
-import * as mpCamera from "@mediapipe/camera_utils";
 import { motion, AnimatePresence } from "motion/react";
 import { useHandMode } from "../context/HandModeContext";
 
@@ -9,14 +6,19 @@ const STICKY_THRESHOLD = 200;
 const PINCH_THRESHOLD = 0.04;
 const FIST_THRESHOLD = 0.12;
 const DWELL_DURATION = 1500;
-const SCROLL_VELOCITY_MULTIPLIER = 1.8; // Safe multiplier for the Reel experience
+const SCROLL_VELOCITY_MULTIPLIER = 1.8;
+
+type NormalizedLandmark = { x: number; y: number };
+type MappedResults = { multiHandLandmarks: NormalizedLandmark[][] };
 
 export default function HandCursor() {
   const { isHandModeEnabled, setIsHandModeEnabled } = useHandMode();
   const [position, setPosition] = useState({ x: -100, y: -100 });
   const [gesture, setGesture] = useState<"none" | "pinch" | "fist">("none");
   const [stickyTarget, setStickyTarget] = useState<HTMLElement | null>(null);
+  
   const [isActive, setIsActive] = useState(false);
+  const [isModelReady, setIsModelReady] = useState(false);
   const [cameraStatus, setCameraStatus] = useState<"idle" | "requesting" | "granted" | "denied">("idle");
   
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -26,8 +28,7 @@ export default function HandCursor() {
   const audioContextIdx = useRef<AudioContext | null>(null);
   
   const stickyTargetRef = useRef<HTMLElement | null>(null);
-  const resultsRef = useRef<Results | null>(null);
-  
+  const resultsRef = useRef<MappedResults | null>(null);
   const circleRef = useRef<SVGCircleElement>(null);
 
   const radius = 24;
@@ -61,18 +62,15 @@ export default function HandCursor() {
     }
   },[]);
 
+  // 1. Initial Permission Check
   useEffect(() => {
     if (isHandModeEnabled && cameraStatus === 'idle') {
       setCameraStatus('requesting');
       
-      // FIX: Safely check if the browser allows camera API access (requires HTTPS/Localhost)
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        console.error("Camera API not available (requires HTTPS or localhost).");
+        console.error("Camera API not available.");
         setCameraStatus('denied');
-        setTimeout(() => {
-          setIsHandModeEnabled(false);
-          setCameraStatus('idle');
-        }, 4000);
+        setTimeout(() => { setIsHandModeEnabled(false); setCameraStatus('idle'); }, 4000);
         return;
       }
 
@@ -84,44 +82,97 @@ export default function HandCursor() {
         .catch((err) => {
           console.error("Camera access denied:", err);
           setCameraStatus('denied');
-          setTimeout(() => {
-            setIsHandModeEnabled(false);
-            setCameraStatus('idle');
-          }, 4000);
+          setTimeout(() => { setIsHandModeEnabled(false); setCameraStatus('idle'); }, 4000);
         });
     } else if (!isHandModeEnabled) {
       setCameraStatus('idle');
+      setIsModelReady(false);
       document.body.classList.remove('hide-cursor');
     }
   }, [isHandModeEnabled, cameraStatus, setIsHandModeEnabled]);
 
+  // 2. Camera & ml5 Pipeline
   useEffect(() => {
     if (cameraStatus !== 'granted' || !videoRef.current) {
       setIsActive(false);
       return;
     }
 
-    const Hands = mpHands.Hands || (mpHands as any).default?.Hands || (window as any).Hands;
-    const Camera = mpCamera.Camera || (mpCamera as any).default?.Camera || (window as any).Camera;
+    let handPoseModel: any = null;
+    let stream: MediaStream | null = null;
+    let isComponentActive = true;
+    let rafId: number;
 
-    const hands = new Hands({
-      locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
-    });
+    const initSystem = async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 640, height: 480, facingMode: "user" }
+        });
 
-    hands.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
-    hands.onResults((results: Results) => { resultsRef.current = results; });
+        if (!videoRef.current || !isComponentActive) return;
+        
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play().catch(e => console.warn("Auto-play warning:", e));
 
-    const camera = new Camera(videoRef.current, {
-      onFrame: async () => { if (videoRef.current) await hands.send({ image: videoRef.current }); },
-      width: 480, height: 360,
-    });
-    
-    camera.start();
+        // Wait until video explicitly has width
+        await new Promise<void>((resolve) => {
+          const checkReady = () => {
+            if (videoRef.current && videoRef.current.videoWidth > 0) resolve();
+            else requestAnimationFrame(checkReady);
+          };
+          checkReady();
+        });
+
+        if (!isComponentActive) return;
+
+        // VITAL FIX: We properly `await` the model here so we get the AI object, not a Promise!
+        handPoseModel = await (window as any).ml5.handPose({ maxHands: 1, flipped: false });
+        console.log("✅ ml5 model loaded and unwrapped successfully!");
+        
+        if (!isComponentActive) return;
+        setIsModelReady(true);
+
+        // Now we can safely call detectStart on the actual model object
+        handPoseModel.detectStart(videoRef.current, (results: any[]) => {
+          if (!isComponentActive) return;
+          
+          if (results && results.length > 0) {
+            const hand = results[0];
+            const points = hand.keypoints || hand.landmarks;
+            
+            if (points && Array.isArray(points) && points.length > 8) {
+              const videoW = videoRef.current?.videoWidth || 640;
+              const videoH = videoRef.current?.videoHeight || 480;
+              
+              const mappedLandmarks = points.map((kp: any) => {
+                const rawX = kp.x !== undefined ? kp.x : (kp[0] || 0);
+                const rawY = kp.y !== undefined ? kp.y : (kp[1] || 0);
+                
+                // ml5 gives absolute pixels (e.g. 320x240). We map them to 0.0-1.0
+                const finalX = rawX > 1.5 ? rawX / videoW : rawX;
+                const finalY = rawY > 1.5 ? rawY / videoH : rawY;
+
+                return { x: finalX, y: finalY };
+              });
+              
+              resultsRef.current = { multiHandLandmarks: [mappedLandmarks] };
+              return;
+            }
+          }
+          // No hand found in this frame
+          resultsRef.current = { multiHandLandmarks: [] };
+        });
+
+        rafId = requestAnimationFrame(updateLoop);
+
+      } catch (err) {
+        console.error("Camera or ml5 init failed:", err);
+      }
+    };
 
     const handleMouseMove = () => document.body.classList.remove('hide-cursor');
     window.addEventListener('mousemove', handleMouseMove);
 
-    let rafId: number;
     const updateLoop = () => {
       const results = resultsRef.current;
       if (results && results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
@@ -136,6 +187,7 @@ export default function HandCursor() {
         const midX = (thumbTip.x + indexTip.x) / 2;
         const midY = (thumbTip.y + indexTip.y) / 2;
         
+        // Flipped mapping ensures moving hand left moves cursor left
         const targetX = (1 - midX) * window.innerWidth;
         const targetY = midY * window.innerHeight;
         
@@ -151,34 +203,22 @@ export default function HandCursor() {
         const isFist = avgTipDist < FIST_THRESHOLD && !isPinching;
 
         if (isFist) {
-          if (gesture !== "fist") {
-            setGesture("fist");
-            document.body.classList.add("is-fist-scrolling"); // Disables snapping!
-          }
+          if (gesture !== "fist") { setGesture("fist"); document.body.classList.add("is-fist-scrolling"); }
           if (circleRef.current) circleRef.current.style.strokeDashoffset = String(circumference);
           pinchStartTime.current = null;
           
           if (lastHandPos.current) {
             const deltaY = (lastHandPos.current.y - smoothY) * SCROLL_VELOCITY_MULTIPLIER;
-            
             const elementUnderCursor = document.elementFromPoint(smoothX, smoothY);
-            
-            // Re-added specific tags to accurately catch all Tailwind overflow varieties
             const scrollContainer = elementUnderCursor?.closest('.overflow-y-scroll, .overflow-auto, .overflow-y-auto, [data-scrollable="true"]');
             
-            if (scrollContainer) {
-               scrollContainer.scrollBy(0, deltaY); 
-            } else {
-               window.scrollBy(0, deltaY);
-            }
+            if (scrollContainer) scrollContainer.scrollBy(0, deltaY); 
+            else window.scrollBy(0, deltaY);
           }
           lastHandPos.current = { x: smoothX, y: smoothY };
         } 
         else if (isPinching) {
-          if (gesture !== "pinch") {
-            setGesture("pinch");
-            document.body.classList.remove("is-fist-scrolling");
-          }
+          if (gesture !== "pinch") { setGesture("pinch"); document.body.classList.remove("is-fist-scrolling"); }
           lastHandPos.current = null;
           
           if (pinchStartTime.current === null) {
@@ -186,11 +226,7 @@ export default function HandCursor() {
           } else {
             const elapsed = Date.now() - pinchStartTime.current;
             const progress = Math.min(elapsed / DWELL_DURATION, 1);
-            
-            if (circleRef.current) {
-              circleRef.current.style.strokeDashoffset = String(circumference - progress * circumference);
-            }
-            
+            if (circleRef.current) circleRef.current.style.strokeDashoffset = String(circumference - progress * circumference);
             if (progress >= 1) {
               triggerClick(smoothX, smoothY);
               pinchStartTime.current = null;
@@ -199,10 +235,7 @@ export default function HandCursor() {
           }
         } 
         else {
-          if (gesture !== "none") {
-            setGesture("none");
-            document.body.classList.remove("is-fist-scrolling");
-          }
+          if (gesture !== "none") { setGesture("none"); document.body.classList.remove("is-fist-scrolling"); }
           if (circleRef.current) circleRef.current.style.strokeDashoffset = String(circumference);
           pinchStartTime.current = null;
           lastHandPos.current = null;
@@ -223,12 +256,19 @@ export default function HandCursor() {
       rafId = requestAnimationFrame(updateLoop);
     };
 
-    rafId = requestAnimationFrame(updateLoop);
+    initSystem();
 
     return () => {
-      camera.stop();
-      hands.close();
+      isComponentActive = false;
       cancelAnimationFrame(rafId);
+      
+      if (handPoseModel && typeof handPoseModel.detectStop === 'function') {
+        try { handPoseModel.detectStop(); } catch (e) {}
+      }
+
+      if (stream) stream.getTracks().forEach(track => track.stop());
+      if (videoRef.current) videoRef.current.srcObject = null;
+      
       window.removeEventListener('mousemove', handleMouseMove);
       document.body.classList.remove('hide-cursor');
       document.body.classList.remove('is-fist-scrolling');
@@ -257,15 +297,10 @@ export default function HandCursor() {
       const centerY = rect.top + rect.height / 2;
       const d = Math.sqrt(Math.pow(x - centerX, 2) + Math.pow(y - centerY, 2));
 
-      if (d < STICKY_THRESHOLD && d < minD) {
-        minD = d;
-        closest = el as HTMLElement;
-      }
+      if (d < STICKY_THRESHOLD && d < minD) { minD = d; closest = el as HTMLElement; }
     });
 
-    if (stickyTargetRef.current && stickyTargetRef.current !== closest) {
-      stickyTargetRef.current.removeAttribute("data-hand-hover");
-    }
+    if (stickyTargetRef.current && stickyTargetRef.current !== closest) stickyTargetRef.current.removeAttribute("data-hand-hover");
     if (closest) (closest as HTMLElement).setAttribute("data-hand-hover", "true");
     
     stickyTargetRef.current = closest;
@@ -276,9 +311,8 @@ export default function HandCursor() {
     const el = stickyTargetRef.current || document.elementFromPoint(x, y);
     if (el) {
       playClickSound();
-      if (el instanceof HTMLElement) {
-        el.click(); 
-      } else {
+      if (el instanceof HTMLElement) el.click(); 
+      else {
         const clickEvent = new MouseEvent("click", { bubbles: true, cancelable: true, view: window });
         el.dispatchEvent(clickEvent);
       }
@@ -286,22 +320,6 @@ export default function HandCursor() {
   };
 
   if (!isHandModeEnabled) return null;
-
-  if (cameraStatus === 'requesting' || cameraStatus === 'denied') {
-    return (
-      <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-white/90 backdrop-blur-sm">
-        <div className="bg-white border border-black p-8 max-w-md text-center shadow-2xl">
-          <h2 className="font-sans font-black text-2xl uppercase tracking-tighter mb-4">Camera Access Required</h2>
-          <p className="font-sans text-sm text-neutral-600 mb-8 leading-relaxed">
-            {cameraStatus === 'requesting' 
-              ? "We cannot bypass your browser's security. Please allow camera access in the native prompt to enable Hand Tracking Mode."
-              : "Camera access was denied. Hand mode disabled. Please reset your browser permissions to try again."}
-          </p>
-          {cameraStatus === 'requesting' && <div className="w-8 h-8 border-2 border-black border-t-transparent rounded-full animate-spin mx-auto" />}
-        </div>
-      </div>
-    );
-  }
 
   let visualX = position.x;
   let visualY = position.y;
@@ -314,7 +332,22 @@ export default function HandCursor() {
 
   return (
     <>
-      <video ref={videoRef} className="hidden" playsInline muted />
+      {/* Video Preview inside app UI */}
+      <div className="fixed bottom-6 left-6 z-[9999] w-40 h-32 border border-black/10 shadow-lg bg-black/5 overflow-hidden pointer-events-none rounded-none">
+        <video 
+          ref={videoRef} 
+          width="640" 
+          height="480" 
+          className="w-full h-full object-cover grayscale scale-x-[-1]" 
+          playsInline 
+          autoPlay 
+          muted 
+        />
+        <div className="absolute top-0 left-0 bg-white/90 backdrop-blur-sm px-2 py-1 text-[8px] font-mono uppercase tracking-widest text-black border-b border-r border-black/10">
+          Camera Input
+        </div>
+      </div>
+      
       <div className="fixed inset-0 pointer-events-none z-[9999]">
         <AnimatePresence>
           {isActive && (
@@ -358,12 +391,18 @@ export default function HandCursor() {
 
       <div className="fixed bottom-6 right-6 z-[9999] bg-white/90 backdrop-blur-md border border-blue-100 px-4 py-2 rounded-none font-mono text-[9px] tracking-widest uppercase flex flex-col items-start gap-1 shadow-lg">
         <div className="flex items-center gap-3">
-          <div className={`w-2 h-2 rounded-full ${isActive ? "bg-blue-500" : "bg-red-500 animate-pulse"}`} />
-          {isActive ? "System Ready" : "Initializing..."}
+          <div className={`w-2 h-2 rounded-full ${
+            isActive ? "bg-blue-500" : isModelReady ? "bg-yellow-500 animate-pulse" : "bg-red-500"
+          }`} />
+          {isActive 
+            ? "System Ready" 
+            : isModelReady 
+              ? "Waiting for Hand..." 
+              : "Downloading Model..."}
         </div>
-        {isActive && (
+        {(isActive || isModelReady) && (
           <div className="text-[8px] opacity-60">
-            {gesture === "fist" ? "Action: Scrolling" : gesture === "pinch" ? "Action: Selecting" : "Status: Tracking"}
+            {!isActive ? "Action: Hold hand up" : gesture === "fist" ? "Action: Scrolling" : gesture === "pinch" ? "Action: Selecting" : "Status: Tracking"}
           </div>
         )}
       </div>
