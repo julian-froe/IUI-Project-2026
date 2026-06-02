@@ -74,9 +74,10 @@ export function HandModeProvider({ children }: { children: ReactNode }) {
     setOnboardingStatus("idle");
   }, []);
 
+  // Modified: Keep isHandModeEnabledState as true, but dismiss the onboarding screens
   const cancelOnboarding = useCallback(() => {
+    setHasSeenOnboardingThisSession(true);
     setOnboardingStatus("idle");
-    setIsHandModeEnabledState(false);
   }, []);
 
   const value = useMemo(() => ({
