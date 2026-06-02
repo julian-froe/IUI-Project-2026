@@ -4,6 +4,7 @@ import HomePage from "./pages/HomePage";
 import RecipeDetailPage from "./pages/RecipeDetailPage";
 import Navbar from "./components/Navbar";
 import HandCursor from "./components/HandCursor";
+import HandOnboarding from "./components/HandOnboarding";
 import { HandModeProvider } from "./context/HandModeContext";
 
 function ScrollToTop() {
@@ -20,6 +21,7 @@ export default function App() {
       <Router>
         <ScrollToTop />
         <HandCursor />
+        <HandOnboarding />
         <div className="selection:bg-black selection:text-white">
           <Navbar />
           <Routes>
