@@ -28,3 +28,26 @@
 .is-fist-scrolling * {
   scroll-snap-type: none !important;
 }
+
+@keyframes exercise-complete-pulse {
+  0% {
+    border-color: rgba(34, 197, 94, 0.35);
+    box-shadow: inset 0 0 0 0 rgba(34, 197, 94, 0), 0 0 0 rgba(34, 197, 94, 0);
+    transform: scale(1);
+  }
+  22% {
+    border-color: rgb(34, 197, 94);
+    box-shadow: inset 0 0 0 14px rgba(34, 197, 94, 0.38), 0 0 72px rgba(34, 197, 94, 0.65);
+    transform: scale(1.012);
+  }
+  58% {
+    border-color: rgb(34, 197, 94);
+    box-shadow: inset 0 0 0 8px rgba(34, 197, 94, 0.22), 0 0 44px rgba(34, 197, 94, 0.38);
+    transform: scale(1.006);
+  }
+  100% {
+    border-color: rgba(34, 197, 94, 0);
+    box-shadow: inset 0 0 0 0 rgba(34, 197, 94, 0), 0 0 0 rgba(34, 197, 94, 0);
+    transform: scale(1);
+  }
+}
