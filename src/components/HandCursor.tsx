@@ -13,6 +13,7 @@ const DWELL_DURATION = 1500;
 const MOUSE_IDLE_HIDE_DELAY = 900;
 const SCROLL_VELOCITY_MULTIPLIER = 1.8; // Safe multiplier for the Reel experience
 const ONBOARDING_ROOT_SELECTOR = "[data-hand-onboarding]";
+const INTERACTIVE_TARGET_SELECTOR = 'button, a, [role="button"], .group';
 
 export default function HandCursor() {
   const {
@@ -58,33 +59,78 @@ export default function HandCursor() {
     }
   }, []);
 
-  const playClickSound = useCallback(() => {
+  const getAudioContext = useCallback(() => {
+    if (!audioContextIdx.current) {
+      audioContextIdx.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+    }
+    const ctx = audioContextIdx.current;
+    if (ctx.state === "suspended") ctx.resume();
+    return ctx;
+  }, []);
+
+  const playSuccessSound = useCallback(() => {
+    try {
+      const ctx = getAudioContext();
+      const startTime = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const filter = ctx.createBiquadFilter();
+
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(320, startTime);
+      osc.frequency.exponentialRampToValueAtTime(240, startTime + 0.045);
+
+      filter.type = "lowpass";
+      filter.frequency.setValueAtTime(850, startTime);
+      filter.Q.setValueAtTime(0.45, startTime);
+
+      gain.gain.setValueAtTime(0.0001, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.038, startTime + 0.004);
+      gain.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.055);
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(startTime);
+      osc.stop(startTime + 0.07);
+    } catch (e) {
+      console.warn("Audio context failed", e);
+    }
+  }, [getAudioContext]);
+
+  const playErrorSound = useCallback(() => {
     try {
       if (!audioContextIdx.current) {
         audioContextIdx.current = new (window.AudioContext || (window as any).webkitAudioContext)();
       }
-      const ctx = audioContextIdx.current;
-      if (ctx.state === "suspended") ctx.resume();
-
+      const ctx = getAudioContext();
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
+      const filter = ctx.createBiquadFilter();
 
-      osc.type = "sine";
-      osc.frequency.setValueAtTime(880, ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(110, ctx.currentTime + 0.1);
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(240, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(130, ctx.currentTime + 0.16);
 
-      gain.gain.setValueAtTime(0.2, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
+      filter.type = "lowpass";
+      filter.frequency.setValueAtTime(1200, ctx.currentTime);
+      filter.Q.setValueAtTime(0.5, ctx.currentTime);
 
-      osc.connect(gain);
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.075, ctx.currentTime + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.18);
+
+      osc.connect(filter);
+      filter.connect(gain);
       gain.connect(ctx.destination);
 
       osc.start();
-      osc.stop(ctx.currentTime + 0.1);
+      osc.stop(ctx.currentTime + 0.2);
     } catch (e) {
       console.warn("Audio context failed", e);
     }
-  }, []);
+  }, [getAudioContext]);
 
   const clearStickyTarget = useCallback(() => {
     if (stickyTargetRef.current) {
@@ -129,28 +175,38 @@ export default function HandCursor() {
     setStickyTarget(closest);
   }, [clearStickyTarget]);
 
+  const getActionableClickTarget = useCallback((el: Element | null) => {
+    const target = el?.closest(INTERACTIVE_TARGET_SELECTOR);
+    if (!(target instanceof HTMLElement)) return null;
+
+    if (target instanceof HTMLButtonElement && target.disabled) return null;
+    if (target.getAttribute("aria-disabled") === "true") return null;
+
+    return target;
+  }, []);
+
   const triggerClick = useCallback((x: number, y: number) => {
-    const el = stickyTargetRef.current || document.elementFromPoint(x, y);
-    if (!el) return;
+    const rawTarget = stickyTargetRef.current || document.elementFromPoint(x, y);
+    const el = getActionableClickTarget(rawTarget);
+
+    if (!el) {
+      playErrorSound();
+      return;
+    }
 
     if (onboardingActiveRef.current && !el.closest(ONBOARDING_ROOT_SELECTOR)) {
+      playErrorSound();
       return;
     }
 
     setHandTracking({
       lastClickAt: Date.now(),
-      lastClickTarget: el instanceof HTMLElement ? el : el.parentElement,
+      lastClickTarget: el,
     });
     window.dispatchEvent(new CustomEvent("handmode:click", { detail: { target: el } }));
-    playClickSound();
-
-    if (el instanceof HTMLElement) {
-      el.click();
-    } else {
-      const clickEvent = new MouseEvent("click", { bubbles: true, cancelable: true, view: window });
-      el.dispatchEvent(clickEvent);
-    }
-  }, [playClickSound, setHandTracking]);
+    playSuccessSound();
+    el.click();
+  }, [getActionableClickTarget, playErrorSound, playSuccessSound, setHandTracking]);
 
   useEffect(() => {
     if (!isHandModeEnabled) {
