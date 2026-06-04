@@ -6,13 +6,90 @@ import { motion, AnimatePresence } from "motion/react";
 import { useHandMode } from "../context/HandModeContext";
 import type { HandCameraStatus, HandGesture } from "../context/HandModeContext";
 
-const STICKY_THRESHOLD = 200;
+// --- Configuration Constants ---
+const STICKY_ACQUIRE_THRESHOLD = 170;
+const STICKY_RELEASE_THRESHOLD = 230;
 const PINCH_THRESHOLD = 0.04;
 const FIST_THRESHOLD = 0.12;
 const DWELL_DURATION = 1500;
 const MOUSE_IDLE_HIDE_DELAY = 900;
-const SCROLL_VELOCITY_MULTIPLIER = 1.8; // Safe multiplier for the Reel experience
+const POINTER_GAIN_X = 1.65;
+const POINTER_GAIN_Y = 1.75;
+const SCROLL_VELOCITY_MULTIPLIER = 2.35;
+const SCROLL_DEADZONE = 1.5;
+const SCROLL_MAX_DELTA = 64;
+const SCROLL_SMOOTHING = 0.24;
 const ONBOARDING_ROOT_SELECTOR = "[data-hand-onboarding]";
+const INTERACTIVE_TARGET_SELECTOR = 'button, a, [role="button"], .group';
+
+// --- 1-Euro Filter Implementation (Jitter Smoothing + Speed) ---
+class OneEuroFilter {
+  private minCutoff: number;
+  private beta: number;
+  private dCutoff: number;
+  private xPrev: number | null = null;
+  private dxPrev: number = 0;
+  private tPrev: number | null = null;
+
+  constructor(minCutoff: number = 1.0, beta: number = 0.0, dCutoff: number = 1.0) {
+    this.minCutoff = minCutoff; // Decrease to reduce slow-speed jitter
+    this.beta = beta;           // Increase to reduce high-speed lag
+    this.dCutoff = dCutoff;
+  }
+
+  reset() {
+    this.xPrev = null;
+    this.dxPrev = 0;
+    this.tPrev = null;
+  }
+
+  private alpha(tE: number, cutoff: number) {
+    const tau = 1.0 / (2 * Math.PI * cutoff);
+    return 1.0 / (1.0 + tau / tE);
+  }
+
+  filter(x: number, t: number): number {
+    if (this.xPrev === null || this.tPrev === null) {
+      this.xPrev = x;
+      this.tPrev = t;
+      return x;
+    }
+
+    const tE = (t - this.tPrev) / 1000.0; // Time elapsed in seconds
+    if (tE <= 0) return x;
+
+    const dx = (x - this.xPrev) / tE; // Calculate velocity
+    const alphaD = this.alpha(tE, this.dCutoff);
+    const edx = dx * alphaD + this.dxPrev * (1.0 - alphaD); // Filtered velocity
+    
+    const cutoff = this.minCutoff + this.beta * Math.abs(edx); // Dynamic cutoff based on speed
+    
+    const alphaP = this.alpha(tE, cutoff);
+    const filteredX = x * alphaP + this.xPrev * (1.0 - alphaP); // Filtered position
+
+    this.xPrev = filteredX;
+    this.dxPrev = edx;
+    this.tPrev = t;
+
+    return filteredX;
+  }
+}
+
+// --- Utility Functions ---
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function expandNormalizedPosition(value: number, gain: number) {
+  return clamp((value - 0.5) * gain + 0.5, 0, 1);
+}
+
+function mapHandPointToViewport(x: number, y: number) {
+  return {
+    x: expandNormalizedPosition(1 - x, POINTER_GAIN_X) * window.innerWidth,
+    y: expandNormalizedPosition(y, POINTER_GAIN_Y) * window.innerHeight,
+  };
+}
 
 export default function HandCursor() {
   const {
@@ -21,6 +98,7 @@ export default function HandCursor() {
     setHandTracking,
     isHandOnboardingActive,
   } = useHandMode();
+  
   const [position, setPosition] = useState({ x: -100, y: -100 });
   const [gesture, setGesture] = useState<HandGesture>("none");
   const [stickyTarget, setStickyTarget] = useState<HTMLElement | null>(null);
@@ -30,8 +108,12 @@ export default function HandCursor() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const pinchStartTime = useRef<number | null>(null);
   const lastHandPos = useRef<{ x: number; y: number } | null>(null);
-  const lastPos = useRef({ x: 0, y: 0 });
+  const scrollVelocity = useRef(0);
   const audioContextIdx = useRef<AudioContext | null>(null);
+
+  // Initialize 1-Euro Filters (Tuned for smooth UI targeting)
+  const filterX = useRef(new OneEuroFilter(0.4, 0.02)); 
+  const filterY = useRef(new OneEuroFilter(0.4, 0.02));
 
   const stickyTargetRef = useRef<HTMLElement | null>(null);
   const resultsRef = useRef<Results | null>(null);
@@ -58,33 +140,75 @@ export default function HandCursor() {
     }
   }, []);
 
-  const playClickSound = useCallback(() => {
-    try {
-      if (!audioContextIdx.current) {
-        audioContextIdx.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-      }
-      const ctx = audioContextIdx.current;
-      if (ctx.state === "suspended") ctx.resume();
+  const getAudioContext = useCallback(() => {
+    if (!audioContextIdx.current) {
+      audioContextIdx.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+    }
+    const ctx = audioContextIdx.current;
+    if (ctx.state === "suspended") ctx.resume();
+    return ctx;
+  }, []);
 
+  const playSuccessSound = useCallback(() => {
+    try {
+      const ctx = getAudioContext();
+      const startTime = ctx.currentTime;
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
+      const filter = ctx.createBiquadFilter();
 
-      osc.type = "sine";
-      osc.frequency.setValueAtTime(880, ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(110, ctx.currentTime + 0.1);
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(320, startTime);
+      osc.frequency.exponentialRampToValueAtTime(240, startTime + 0.045);
 
-      gain.gain.setValueAtTime(0.2, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
+      filter.type = "lowpass";
+      filter.frequency.setValueAtTime(850, startTime);
+      filter.Q.setValueAtTime(0.45, startTime);
 
-      osc.connect(gain);
+      gain.gain.setValueAtTime(0.0001, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.090, startTime + 0.004);
+      gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.055);
+
+      osc.connect(filter);
+      filter.connect(gain);
       gain.connect(ctx.destination);
 
-      osc.start();
-      osc.stop(ctx.currentTime + 0.1);
+      osc.start(startTime);
+      osc.stop(startTime + 0.07);
     } catch (e) {
       console.warn("Audio context failed", e);
     }
-  }, []);
+  }, [getAudioContext]);
+
+  const playErrorSound = useCallback(() => {
+    try {
+      const ctx = getAudioContext();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const filter = ctx.createBiquadFilter();
+
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(240, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(130, ctx.currentTime + 0.16);
+
+      filter.type = "lowpass";
+      filter.frequency.setValueAtTime(1200, ctx.currentTime);
+      filter.Q.setValueAtTime(0.5, ctx.currentTime);
+
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.090, ctx.currentTime + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start();
+      osc.stop(ctx.currentTime + 0.2);
+    } catch (e) {
+      console.warn("Audio context failed", e);
+    }
+  }, [getAudioContext]);
 
   const clearStickyTarget = useCallback(() => {
     if (stickyTargetRef.current) {
@@ -93,6 +217,12 @@ export default function HandCursor() {
       setStickyTarget(null);
     }
   }, []);
+
+  useEffect(() => {
+    onboardingActiveRef.current = isHandOnboardingActive;
+    pinchStartTime.current = null;
+    clearStickyTarget();
+  }, [clearStickyTarget, isHandOnboardingActive]);
 
   const findStickyTarget = useCallback((x: number, y: number) => {
     if (gestureRef.current === "fist") {
@@ -103,20 +233,35 @@ export default function HandCursor() {
     const targetSelector = onboardingActiveRef.current
       ? `${ONBOARDING_ROOT_SELECTOR} button:not(:disabled), ${ONBOARDING_ROOT_SELECTOR} a, ${ONBOARDING_ROOT_SELECTOR} [role="button"]:not([aria-disabled="true"]), ${ONBOARDING_ROOT_SELECTOR} .group`
       : 'button:not(:disabled), a, [role="button"]:not([aria-disabled="true"]), .group';
-    const elements = document.querySelectorAll(targetSelector);
+    const elements = document.querySelectorAll<HTMLElement>(targetSelector);
     let closest: HTMLElement | null = null;
     let minD = Infinity;
+
+    if (
+      stickyTargetRef.current &&
+      (!stickyTargetRef.current.isConnected ||
+        (onboardingActiveRef.current && !stickyTargetRef.current.closest(ONBOARDING_ROOT_SELECTOR)))
+    ) {
+      clearStickyTarget();
+    }
 
     elements.forEach((el) => {
       const rect = el.getBoundingClientRect();
       if (rect.width === 0 || rect.height === 0) return;
       const centerX = rect.left + rect.width / 2;
       const centerY = rect.top + rect.height / 2;
-      const d = Math.sqrt(Math.pow(x - centerX, 2) + Math.pow(y - centerY, 2));
+      if (centerX < 0 || centerX > window.innerWidth || centerY < 0 || centerY > window.innerHeight) return;
 
-      if (d < STICKY_THRESHOLD && d < minD) {
+      const elementAtCenter = document.elementFromPoint(centerX, centerY);
+      if (elementAtCenter && elementAtCenter !== el && !el.contains(elementAtCenter)) return;
+
+      const d = Math.sqrt(Math.pow(x - centerX, 2) + Math.pow(y - centerY, 2));
+      // Dynamic threshold: Hysteresis logic makes it easier to stay on a target once acquired
+      const threshold = el === stickyTargetRef.current ? STICKY_RELEASE_THRESHOLD : STICKY_ACQUIRE_THRESHOLD;
+
+      if (d < threshold && d < minD) {
         minD = d;
-        closest = el as HTMLElement;
+        closest = el;
       }
     });
 
@@ -129,28 +274,45 @@ export default function HandCursor() {
     setStickyTarget(closest);
   }, [clearStickyTarget]);
 
+  const getActionableClickTarget = useCallback((el: Element | null) => {
+    const target = el?.closest(INTERACTIVE_TARGET_SELECTOR);
+    if (!(target instanceof HTMLElement)) return null;
+
+    if (target instanceof HTMLButtonElement && target.disabled) return null;
+    if (target.getAttribute("aria-disabled") === "true") return null;
+
+    return target;
+  }, []);
+
   const triggerClick = useCallback((x: number, y: number) => {
-    const el = stickyTargetRef.current || document.elementFromPoint(x, y);
-    if (!el) return;
+    const rawTarget = stickyTargetRef.current || document.elementFromPoint(x, y);
+    const el = getActionableClickTarget(rawTarget);
+
+    if (!el) {
+      playErrorSound();
+      return;
+    }
 
     if (onboardingActiveRef.current && !el.closest(ONBOARDING_ROOT_SELECTOR)) {
+      playErrorSound();
       return;
     }
 
     setHandTracking({
       lastClickAt: Date.now(),
-      lastClickTarget: el instanceof HTMLElement ? el : el.parentElement,
+      lastClickTarget: el,
     });
     window.dispatchEvent(new CustomEvent("handmode:click", { detail: { target: el } }));
-    playClickSound();
+    playSuccessSound();
 
+    // Robust native dispatch strategy from V1 + V2 combined
     if (el instanceof HTMLElement) {
       el.click();
     } else {
       const clickEvent = new MouseEvent("click", { bubbles: true, cancelable: true, view: window });
       el.dispatchEvent(clickEvent);
     }
-  }, [playClickSound, setHandTracking]);
+  }, [getActionableClickTarget, playErrorSound, playSuccessSound, setHandTracking]);
 
   useEffect(() => {
     if (!isHandModeEnabled) {
@@ -185,7 +347,6 @@ export default function HandCursor() {
     if (isHandModeEnabled && cameraStatus === "idle") {
       setCameraStatus("requesting");
 
-      // Safely check whether the browser allows camera API access.
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         console.error("Camera API not available (requires HTTPS or localhost).");
         setCameraStatus("denied");
@@ -215,6 +376,11 @@ export default function HandCursor() {
       document.body.classList.remove("is-fist-scrolling");
       updateGesture("none");
       clearStickyTarget();
+      filterX.current.reset();
+      filterY.current.reset();
+      lastHandPos.current = null;
+      scrollVelocity.current = 0;
+      pinchStartTime.current = null;
       setIsActive(false);
       setPosition({ x: -100, y: -100 });
       setHandTracking({
@@ -239,6 +405,11 @@ export default function HandCursor() {
   useEffect(() => {
     if (cameraStatus !== "granted" || !videoRef.current) {
       setIsActive(false);
+      filterX.current.reset();
+      filterY.current.reset();
+      lastHandPos.current = null;
+      scrollVelocity.current = 0;
+      pinchStartTime.current = null;
       setHandTracking({ isActive: false, cameraStatus, dwellProgress: 0 });
       return;
     }
@@ -266,6 +437,7 @@ export default function HandCursor() {
       const results = resultsRef.current;
       if (results && results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
         setIsActive(true);
+        const timestamp = Date.now();
 
         const landmarks = results.multiHandLandmarks[0];
         const wrist = landmarks[0];
@@ -275,12 +447,11 @@ export default function HandCursor() {
         const midX = (thumbTip.x + indexTip.x) / 2;
         const midY = (thumbTip.y + indexTip.y) / 2;
 
-        const targetX = (1 - midX) * window.innerWidth;
-        const targetY = midY * window.innerHeight;
-
-        const smoothX = lastPos.current.x + (targetX - lastPos.current.x) * 0.45;
-        const smoothY = lastPos.current.y + (targetY - lastPos.current.y) * 0.45;
-        lastPos.current = { x: smoothX, y: smoothY };
+        const target = mapHandPointToViewport(midX, midY);
+        
+        // Apply 1-Euro Filter to coordinates
+        const smoothX = filterX.current.filter(target.x, timestamp);
+        const smoothY = filterY.current.filter(target.y, timestamp);
 
         const pinchDist = Math.sqrt(Math.pow(thumbTip.x - indexTip.x, 2) + Math.pow(thumbTip.y - indexTip.y, 2));
         const isPinching = pinchDist < PINCH_THRESHOLD;
@@ -293,19 +464,30 @@ export default function HandCursor() {
           if (gestureRef.current !== "fist") {
             updateGesture("fist");
             document.body.classList.add("is-fist-scrolling");
+            clearStickyTarget();
           }
           if (circleRef.current) circleRef.current.style.strokeDashoffset = String(circumference);
           pinchStartTime.current = null;
 
           if (lastHandPos.current) {
-            const deltaY = (lastHandPos.current.y - smoothY) * SCROLL_VELOCITY_MULTIPLIER;
+            // Advanced Scroll Physics Strategy (from V2)
+            const handDeltaY = lastHandPos.current.y - smoothY;
+            const targetDeltaY = Math.abs(handDeltaY) < SCROLL_DEADZONE
+              ? 0
+              : clamp(handDeltaY * SCROLL_VELOCITY_MULTIPLIER, -SCROLL_MAX_DELTA, SCROLL_MAX_DELTA);
+            
+            const deltaY = scrollVelocity.current + (targetDeltaY - scrollVelocity.current) * SCROLL_SMOOTHING;
+            scrollVelocity.current = Math.abs(deltaY) < 0.2 ? 0 : deltaY;
+            
             const elementUnderCursor = document.elementFromPoint(smoothX, smoothY);
             const scrollContainer = elementUnderCursor?.closest('.overflow-y-scroll, .overflow-auto, .overflow-y-auto, [data-scrollable="true"]');
 
-            if (scrollContainer && (!onboardingActiveRef.current || scrollContainer.closest(ONBOARDING_ROOT_SELECTOR))) {
-              scrollContainer.scrollBy(0, deltaY);
-            } else if (!onboardingActiveRef.current) {
-              window.scrollBy(0, deltaY);
+            if (scrollVelocity.current !== 0) {
+              if (scrollContainer && (!onboardingActiveRef.current || scrollContainer.closest(ONBOARDING_ROOT_SELECTOR))) {
+                scrollContainer.scrollBy(0, scrollVelocity.current);
+              } else if (!onboardingActiveRef.current) {
+                window.scrollBy(0, scrollVelocity.current);
+              }
             }
           }
           lastHandPos.current = { x: smoothX, y: smoothY };
@@ -323,6 +505,7 @@ export default function HandCursor() {
             document.body.classList.remove("is-fist-scrolling");
           }
           lastHandPos.current = null;
+          scrollVelocity.current = 0;
           let dwellProgress = 0;
 
           if (pinchStartTime.current === null) {
@@ -358,6 +541,7 @@ export default function HandCursor() {
           if (circleRef.current) circleRef.current.style.strokeDashoffset = String(circumference);
           pinchStartTime.current = null;
           lastHandPos.current = null;
+          scrollVelocity.current = 0;
           findStickyTarget(smoothX, smoothY);
 
           setHandTracking({
@@ -373,6 +557,11 @@ export default function HandCursor() {
       } else {
         setIsActive(false);
         document.body.classList.remove("is-fist-scrolling");
+        filterX.current.reset();
+        filterY.current.reset();
+        lastHandPos.current = null;
+        scrollVelocity.current = 0;
+        pinchStartTime.current = null;
         setHandTracking({ isActive: false, cameraStatus, dwellProgress: 0 });
         clearStickyTarget();
       }
@@ -387,6 +576,11 @@ export default function HandCursor() {
       cancelAnimationFrame(rafId);
       document.body.classList.remove("hide-cursor");
       document.body.classList.remove("is-fist-scrolling");
+      filterX.current.reset();
+      filterY.current.reset();
+      lastHandPos.current = null;
+      scrollVelocity.current = 0;
+      pinchStartTime.current = null;
       clearStickyTarget();
     };
   }, [
@@ -470,7 +664,7 @@ export default function HandCursor() {
         </AnimatePresence>
       </div>
 
-      <div className="fixed bottom-6 right-6 z-[9999] bg-white/90 backdrop-blur-md border border-blue-100 px-4 py-2 rounded-none font-mono text-[9px] tracking-widest uppercase flex flex-col items-start gap-1 shadow-lg">
+      <div className="fixed bottom-6 right-6 z-[9999] pointer-events-none bg-white/90 backdrop-blur-md border border-blue-100 px-4 py-2 rounded-none font-mono text-[9px] tracking-widest uppercase flex flex-col items-start gap-1 shadow-lg">
         <div className="flex items-center gap-3">
           <div className={`w-2 h-2 rounded-full ${isActive ? "bg-blue-500" : "bg-red-500 animate-pulse"}`} />
           {isActive ? "System Ready" : "Initializing..."}
