@@ -27,7 +27,7 @@ export default function Navbar() {
         <div className="w-10 h-10 bg-black flex items-center justify-center rounded-sm transition-transform group-hover:scale-105">
           <Flame className="text-white w-6 h-6" />
         </div>
-        <span className="font-sans font-black text-2xl tracking-tighter uppercase">Onyx & Ash</span>
+        <span className="font-sans font-black text-2xl tracking-tighter uppercase">Noir Cuisine</span>
       </Link>
       
       <div className="flex gap-4 md:gap-8 items-center font-sans font-medium text-xs tracking-widest uppercase">

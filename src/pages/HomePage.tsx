@@ -18,7 +18,7 @@ export default function HomePage() {
           animate={{ opacity: 1, y: 0 }}
           className="font-sans font-black text-[12vw] md:text-[10vw] leading-[0.85] tracking-tighter uppercase"
         >
-          Taste in <br /> <span className="italic">Obsidian.</span>
+          Taste in <br /> <span className="italic">Black&White.</span>
         </motion.h1>
         
         <motion.div 
@@ -32,7 +32,7 @@ export default function HomePage() {
         
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-8">
           <p className="max-w-md font-sans text-lg text-neutral-600 leading-tight">
-            Minimalist recipes for the maximalist palate. Curated dishes stripped of color, defined by texture and depth. Welcome to Onyx & Ash.
+            Minimalist recipes for the maximalist palate. Curated dishes stripped of color, defined by texture and depth. Welcome to Noir Cuisine.
           </p>
           
           <div className="flex gap-4">
