@@ -1,15 +1,20 @@
-import React, { useEffect, useRef } from "react";
-import { useParams, Link } from "react-router-dom";
+import React, { useEffect, useRef, useState } from "react";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { motion } from "motion/react";
 import { recipes } from "../data";
-import { ArrowLeft, Clock, BarChart, ChevronDown, MoveDown } from "lucide-react";
+import { ArrowLeft, Clock, BarChart, ChevronDown, MoveDown, Share2 } from "lucide-react";
 import { useHandMode } from "../context/HandModeContext";
 
 export default function RecipeDetailPage() {
   const { id } = useParams();
-  const recipe = recipes.find((r) => r.id === id);
+  const navigate = useNavigate();
+  const recipeIndex = recipes.findIndex((r) => r.id === id);
+  const recipe = recipes[recipeIndex];
   const containerRef = useRef<HTMLDivElement>(null);
   const { isHandModeEnabled } = useHandMode();
+  const [copied, setCopied] = useState(false);
+
+  const nextRecipe = recipes[(recipeIndex + 1) % recipes.length];
 
   useEffect(() => {
     if (containerRef.current) {
@@ -26,13 +31,31 @@ export default function RecipeDetailPage() {
     );
   }
 
+  const handleShare = async () => {
+    const shareData = {
+      title: `Onyx & Ash: ${recipe.title}`,
+      text: recipe.description,
+      url: window.location.href,
+    };
+    if (navigator.share) {
+      try {
+        await navigator.share(shareData);
+      } catch (err) {
+        console.log("Share canceled", err);
+      }
+    } else {
+      navigator.clipboard.writeText(window.location.href);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
   return (
     <div 
       ref={containerRef} 
       data-scrollable="true"
       className="h-screen w-full overflow-y-auto overflow-x-hidden snap-y snap-mandatory bg-white text-black font-sans selection:bg-black selection:text-white no-scrollbar"
     >
-      {/* 1. Hero Section - Full Screen Snap */}
       <section className="relative h-screen w-full snap-start shrink-0 flex flex-col overflow-hidden">
         <div className="absolute inset-0 scale-105">
           <img 
@@ -78,7 +101,6 @@ export default function RecipeDetailPage() {
         </motion.div>
       </section>
 
-      {/* 2. Info & Ingredients - Full Screen Snap */}
       <section className="min-h-screen w-full snap-start shrink-0 flex flex-col justify-center py-20 px-6 bg-white relative z-10">
         <div className="max-w-7xl mx-auto w-full grid grid-cols-1 md:grid-cols-2 gap-20">
           <div>
@@ -86,7 +108,7 @@ export default function RecipeDetailPage() {
               The Story <div className="h-[1px] flex-1 bg-black/10" />
             </h2>
             <p className="text-2xl md:text-3xl leading-snug font-medium text-neutral-800">
-              {recipe.description} Noir cuisine is about the essence of flavor where every ingredient reflects the absolute of its origin. Strip away the visual noise, focus on the soul of the dish.
+              {recipe.description} Onyx & Ash focuses on the essence of flavor where every ingredient reflects the absolute of its origin. Strip away the visual noise, focus on the soul of the dish.
             </p>
           </div>
 
@@ -106,7 +128,6 @@ export default function RecipeDetailPage() {
         </div>
       </section>
 
-      {/* 3. Ritual Title Slide - Full Screen Snap */}
       <section className="h-screen w-full snap-start shrink-0 flex flex-col items-center justify-center bg-black text-white relative">
          <h2 className="text-xl md:text-3xl font-black uppercase tracking-[0.3em] mb-4 flex items-center gap-6">
            <div className="w-8 md:w-16 h-[1px] bg-white" />
@@ -118,10 +139,8 @@ export default function RecipeDetailPage() {
          </div>
       </section>
 
-      {/* 4. Cooking Steps - Full Screen Snaps */}
       {recipe.steps.map((step) => (
         <section key={step.id} className="h-screen w-full snap-start shrink-0 flex flex-col md:flex-row relative bg-black">
-          {/* Split Screen Image */}
           <div className="w-full h-[40vh] md:w-[50vw] md:h-full relative overflow-hidden shrink-0">
             <img 
               src={step.image} 
@@ -132,7 +151,6 @@ export default function RecipeDetailPage() {
             <div className="absolute inset-0 bg-gradient-to-t md:bg-gradient-to-r from-black/80 via-transparent to-transparent md:hidden" />
           </div>
           
-          {/* Split Screen Content Card (Removed overflow nested scrolling to respect primary gesture) */}
           <div className="w-full flex-1 md:w-[50vw] md:h-full flex flex-col justify-center px-8 py-8 md:px-24 bg-white text-black relative z-10 no-scrollbar">
             <span className="text-[12vw] md:text-[8vw] font-black tracking-tighter opacity-10 leading-none mb-8">
               {step.id < 10 ? `0${step.id}` : step.id}
@@ -149,21 +167,27 @@ export default function RecipeDetailPage() {
         </section>
       ))}
 
-      {/* 5. Final Call to Action - Full Screen Snap */}
       <footer className="h-screen w-full snap-start shrink-0 flex flex-col items-center justify-center bg-black text-white relative z-20 px-6 text-center">
         <h2 className="text-5xl md:text-8xl font-black uppercase tracking-tighter mb-12">
           Mastered <br /> The Craft?
         </h2>
         <div className="flex flex-col md:flex-row justify-center gap-6">
-          <button className={`bg-white text-black font-black uppercase tracking-widest hover:bg-neutral-200 transition-all ${isHandModeEnabled ? "px-24 py-12 text-2xl" : "px-12 py-6 text-lg"}`}>
-            Share Your Noir
+          <button 
+            onClick={handleShare}
+            className={`bg-white text-black font-black uppercase tracking-widest hover:bg-neutral-200 transition-all flex justify-center items-center gap-3 ${isHandModeEnabled ? "px-24 py-12 text-2xl" : "px-12 py-6 text-lg"}`}
+          >
+            <Share2 className={isHandModeEnabled ? "w-8 h-8" : "w-5 h-5"} />
+            {copied ? "Link Copied" : "Share Recipe"}
           </button>
-          <Link to="/" className={`border border-white text-white font-black uppercase tracking-widest hover:bg-white hover:text-black transition-all ${isHandModeEnabled ? "px-24 py-12 text-2xl" : "px-12 py-6 text-lg"}`}>
+          <button 
+            onClick={() => navigate(`/recipe/${nextRecipe.id}`)}
+            className={`border border-white text-white font-black uppercase tracking-widest hover:bg-white hover:text-black transition-all ${isHandModeEnabled ? "px-24 py-12 text-2xl" : "px-12 py-6 text-lg"}`}
+          >
             Next Recipe
-          </Link>
+          </button>
         </div>
         <p className="absolute bottom-12 opacity-30 font-mono text-xs tracking-widest uppercase">
-          &copy; 2026 Noir Cuisine — Monochrome Aesthetics
+          &copy; 2026 Onyx & Ash — Monochrome Aesthetics
         </p>
       </footer>
     </div>
