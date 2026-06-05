@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
+import fistIconUrl from "../../assets/HandGestureIcons/Fist.svg";
+import openHandIconUrl from "../../assets/HandGestureIcons/OpenHand.svg";
+import pinchIconUrl from "../../assets/HandGestureIcons/Pinch.svg";
 import { useHandMode } from "../context/HandModeContext";
 import type { HandOnboardingStep, HandTrackingState } from "../context/HandModeContext";
 
 const PRESENT_HAND_DELAY = 2000;
+const AUTO_ADVANCE_DELAY = 1200;
 const POINT_TARGETS_REQUIRED = 5;
 const CLICK_TARGETS_REQUIRED = 3;
 const SCROLL_PANELS_REQUIRED = 4;
@@ -43,6 +47,24 @@ const emptyCompletion: Record<HandOnboardingStep, boolean> = {
   scroll: false,
 };
 
+const stepCompletionContent: Record<HandOnboardingStep, {
+  title: string;
+  description: string;
+}> = {
+  point: {
+    title: "Pointer locked in",
+    description: "Nice aim. Moving on to pinch selection.",
+  },
+  click: {
+    title: "Click learned",
+    description: "Great. Next, close your hand to scroll.",
+  },
+  scroll: {
+    title: "Practice complete",
+    description: "You are ready. Press Finish to enter the site.",
+  },
+};
+
 export default function HandOnboarding() {
   const {
     isHandModeEnabled,
@@ -66,6 +88,30 @@ export default function HandOnboarding() {
     setCompletedSteps((current) => current[step] ? current : { ...current, [step]: true });
   }, []);
 
+  const currentStepIndex = stepOrder.indexOf(onboardingStep);
+  const currentContent = stepContent[onboardingStep];
+  const currentCompletionContent = stepCompletionContent[onboardingStep];
+  const isStepComplete = completedSteps[onboardingStep];
+  const isFinalStep = onboardingStep === "scroll";
+  const nextStep = stepOrder[currentStepIndex + 1];
+
+  useEffect(() => {
+    if (
+      onboardingStatus !== "tutorial" ||
+      !isStepComplete ||
+      isFinalStep ||
+      !nextStep
+    ) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setOnboardingStep(nextStep);
+    }, AUTO_ADVANCE_DELAY);
+
+    return () => window.clearTimeout(timer);
+  }, [isFinalStep, isStepComplete, nextStep, onboardingStatus, setOnboardingStep]);
+
   if (!isHandModeEnabled || onboardingStatus === "idle") {
     return null;
   }
@@ -79,27 +125,6 @@ export default function HandOnboarding() {
       />
     );
   }
-
-  const currentStepIndex = stepOrder.indexOf(onboardingStep);
-  const currentContent = stepContent[onboardingStep];
-  const isStepComplete = completedSteps[onboardingStep];
-  const isFinalStep = onboardingStep === "scroll";
-
-  const goBack = () => {
-    const previousStep = stepOrder[Math.max(0, currentStepIndex - 1)];
-    setOnboardingStep(previousStep);
-  };
-
-  const goNext = () => {
-    if (!isStepComplete) return;
-
-    if (isFinalStep) {
-      completeOnboarding();
-      return;
-    }
-
-    setOnboardingStep(stepOrder[currentStepIndex + 1]);
-  };
 
   return (
     <div
@@ -153,37 +178,64 @@ export default function HandOnboarding() {
             </AnimatePresence>
           </div>
 
-          <div className="mt-auto grid grid-cols-2 gap-5">
-            {currentStepIndex === 0 ? (
+          <div className="mt-auto space-y-5">
+            <AnimatePresence mode="wait">
+              {isStepComplete && (
+                <motion.div
+                  key={`${onboardingStep}-complete`}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  transition={{ duration: 0.18 }}
+                  className="border border-white bg-white/10 p-5"
+                >
+                  <p className="font-mono text-[10px] tracking-[0.3em] uppercase text-white/45 mb-3">
+                    Step complete
+                  </p>
+                  <p className="font-sans font-black text-xl uppercase tracking-tighter leading-none">
+                    {currentCompletionContent.title}
+                  </p>
+                  <p className="mt-3 text-sm text-white/60 leading-relaxed">
+                    {currentCompletionContent.description}
+                  </p>
+                  {!isFinalStep && (
+                    <div className="mt-5 h-1 bg-white/15 overflow-hidden">
+                      <motion.div
+                        className="h-full bg-white"
+                        initial={{ width: "0%" }}
+                        animate={{ width: "100%" }}
+                        transition={{ duration: AUTO_ADVANCE_DELAY / 1000, ease: "linear" }}
+                      />
+                    </div>
+                  )}
+                </motion.div>
+                )}
+            </AnimatePresence>
+
+            <div className={isFinalStep ? "grid grid-cols-2 gap-5" : ""}>
               <button
                 type="button"
                 onClick={completeOnboarding}
-                className="h-16 border border-white/25 text-white/55 text-xs font-black tracking-widest uppercase hover:border-white hover:text-white transition-colors"
+                className="h-16 w-full border border-white/25 text-white/55 text-xs font-black tracking-widest uppercase hover:border-white hover:text-white transition-colors"
               >
                 Skip
               </button>
-            ) : (
-              <button
-                type="button"
-                onClick={goBack}
-                className="h-16 border border-white bg-white text-black text-xs font-black tracking-widest uppercase hover:bg-neutral-200 transition-colors"
-              >
-                Back
-              </button>
-            )}
 
-            <button
-              type="button"
-              onClick={goNext}
-              disabled={!isStepComplete}
-              className={`h-16 border text-xs font-black tracking-widest uppercase transition-colors ${
-                isStepComplete
-                  ? "border-white bg-white text-black hover:bg-neutral-200"
-                  : "border-white/20 bg-white/10 text-white/30 cursor-not-allowed"
-              }`}
-            >
-              {isFinalStep ? "Finish" : "Next"}
-            </button>
+              {isFinalStep && (
+                <button
+                  type="button"
+                  onClick={completeOnboarding}
+                  disabled={!isStepComplete}
+                  className={`h-16 border text-xs font-black tracking-widest uppercase transition-colors ${
+                    isStepComplete
+                      ? "border-white bg-white text-black hover:bg-neutral-200"
+                      : "border-white/20 bg-white/10 text-white/30 cursor-not-allowed"
+                  }`}
+                >
+                  Finish
+                </button>
+              )}
+            </div>
           </div>
         </aside>
 
@@ -637,41 +689,25 @@ function GestureIcon({ step }: { step: HandOnboardingStep }) {
 }
 
 function OpenHandIcon() {
-  return (
-    <svg viewBox="0 0 120 120" fill="none" className="w-full h-full" aria-hidden="true">
-      <path d="M45 60V20C45 15 49 11 54 11C59 11 63 15 63 20V54" stroke="currentColor" strokeWidth="7" strokeLinecap="round" />
-      <path d="M63 55V18C63 13 67 9 72 9C77 9 81 13 81 18V60" stroke="currentColor" strokeWidth="7" strokeLinecap="round" />
-      <path d="M81 61V28C81 23 85 19 90 19C95 19 99 23 99 28V68" stroke="currentColor" strokeWidth="7" strokeLinecap="round" />
-      <path d="M45 62V32C45 27 41 23 36 23C31 23 27 27 27 32V73C27 94 42 109 63 109H70C88 109 101 96 101 78V66" stroke="currentColor" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M44 76L33 65C29 61 22 61 18 66C14 70 15 76 19 80L43 104" stroke="currentColor" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M53 78C58 83 66 85 74 83" stroke="currentColor" strokeWidth="4" strokeLinecap="round" opacity="0.45" />
-    </svg>
-  );
+  return <HandGestureImage src={openHandIconUrl} />;
 }
 
 function PinchIcon() {
-  return (
-    <svg viewBox="0 0 120 120" fill="none" className="w-full h-full" aria-hidden="true">
-      <path d="M33 78C29 69 30 59 37 52L58 31C62 27 68 27 72 31C76 35 76 41 72 45L58 59" stroke="currentColor" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M58 59L78 39C82 35 88 35 92 39C96 43 96 49 92 53L70 75" stroke="currentColor" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M38 80L28 70C24 66 18 66 14 70C10 74 10 80 14 84L36 106" stroke="currentColor" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M37 52L28 43C24 39 18 39 14 43C10 47 10 53 14 57L31 74" stroke="currentColor" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M49 91C58 101 76 102 87 91L98 80" stroke="currentColor" strokeWidth="7" strokeLinecap="round" />
-      <circle cx="88" cy="26" r="7" fill="currentColor" />
-      <circle cx="103" cy="19" r="4" fill="currentColor" opacity="0.45" />
-    </svg>
-  );
+  return <HandGestureImage src={pinchIconUrl} />;
 }
 
 function FistIcon() {
+  return <HandGestureImage src={fistIconUrl} />;
+}
+
+function HandGestureImage({ src }: { src: string }) {
   return (
-    <svg viewBox="0 0 120 120" fill="none" className="w-full h-full" aria-hidden="true">
-      <path d="M29 52C29 45 34 40 41 40H83C90 40 95 45 95 52V80C95 98 82 109 64 109H58C39 109 25 96 25 78V64C25 57 30 52 37 52H84" stroke="currentColor" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M41 40V28C41 22 45 18 51 18C57 18 61 22 61 28V40" stroke="currentColor" strokeWidth="7" strokeLinecap="round" />
-      <path d="M61 40V24C61 18 65 14 71 14C77 14 81 18 81 24V40" stroke="currentColor" strokeWidth="7" strokeLinecap="round" />
-      <path d="M81 41V31C81 26 85 22 90 22C95 22 99 26 99 31V60" stroke="currentColor" strokeWidth="7" strokeLinecap="round" />
-      <path d="M40 70H88" stroke="currentColor" strokeWidth="5" strokeLinecap="round" opacity="0.45" />
-      <path d="M42 86H79" stroke="currentColor" strokeWidth="5" strokeLinecap="round" opacity="0.45" />
-    </svg>
+    <img
+      src={src}
+      alt=""
+      aria-hidden="true"
+      className="w-full h-full object-contain invert"
+      draggable={false}
+    />
   );
 }
