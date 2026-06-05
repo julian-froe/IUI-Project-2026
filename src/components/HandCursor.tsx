@@ -305,13 +305,7 @@ export default function HandCursor() {
     window.dispatchEvent(new CustomEvent("handmode:click", { detail: { target: el } }));
     playSuccessSound();
 
-    // Robust native dispatch strategy from V1 + V2 combined
-    if (el instanceof HTMLElement) {
-      el.click();
-    } else {
-      const clickEvent = new MouseEvent("click", { bubbles: true, cancelable: true, view: window });
-      el.dispatchEvent(clickEvent);
-    }
+    el.click();
   }, [getActionableClickTarget, playErrorSound, playSuccessSound, setHandTracking]);
 
   useEffect(() => {
