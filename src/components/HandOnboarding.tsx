@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import fistIconUrl from "../../assets/HandGestureIcons/Fist.svg";
 import openHandIconUrl from "../../assets/HandGestureIcons/OpenHand.svg";
 import pinchIconUrl from "../../assets/HandGestureIcons/Pinch.svg";
-import { useHandMode } from "../context/HandModeContext";
+import { useHandMode, useHandTrackingRef } from "../context/HandModeContext";
 import type { HandOnboardingStep, HandTrackingState } from "../context/HandModeContext";
 
 const PRESENT_HAND_DELAY = 2000;
@@ -250,19 +250,13 @@ export default function HandOnboarding() {
               className="absolute inset-0"
             >
               {onboardingStep === "point" && (
-                <PointingExercise
-                  tracking={tracking}
-                  onComplete={() => markStepComplete("point")}
-                />
+                <PointingExercise onComplete={() => markStepComplete("point")} />
               )}
               {onboardingStep === "click" && (
                 <ClickingExercise onComplete={() => markStepComplete("click")} />
               )}
               {onboardingStep === "scroll" && (
-                <ScrollingExercise
-                  tracking={tracking}
-                  onComplete={() => markStepComplete("scroll")}
-                />
+                <ScrollingExercise onComplete={() => markStepComplete("scroll")} />
               )}
             </motion.div>
           </AnimatePresence>
@@ -381,13 +375,8 @@ function StepProgress({
   );
 }
 
-function PointingExercise({
-  tracking,
-  onComplete,
-}: {
-  tracking: HandTrackingState;
-  onComplete: () => void;
-}) {
+function PointingExercise({ onComplete }: { onComplete: () => void }) {
+  const trackingRef = useHandTrackingRef();
   const [hits, setHits] = useState(0);
   const [targetIndex, setTargetIndex] = useState(0);
   const targetRef = useRef<HTMLDivElement>(null);
@@ -413,35 +402,39 @@ function PointingExercise({
   }, [hits, onComplete]);
 
   useEffect(() => {
-    const target = targetRef.current;
-    if (!target || !tracking.isActive || tracking.gesture !== "none") {
-      hoverStartedAt.current = null;
-      return;
-    }
+    let rafId: number;
 
-    const rect = target.getBoundingClientRect();
-    const isInside =
-      tracking.position.x >= rect.left &&
-      tracking.position.x <= rect.right &&
-      tracking.position.y >= rect.top &&
-      tracking.position.y <= rect.bottom;
+    const checkHover = () => {
+      const target = targetRef.current;
+      const { isActive, gesture, position } = trackingRef.current;
 
-    if (!isInside) {
-      hoverStartedAt.current = null;
-      return;
-    }
+      if (!target || !isActive || gesture !== "none") {
+        hoverStartedAt.current = null;
+      } else {
+        const rect = target.getBoundingClientRect();
+        const isInside =
+          position.x >= rect.left &&
+          position.x <= rect.right &&
+          position.y >= rect.top &&
+          position.y <= rect.bottom;
 
-    if (hoverStartedAt.current === null) {
-      hoverStartedAt.current = Date.now();
-      return;
-    }
+        if (!isInside) {
+          hoverStartedAt.current = null;
+        } else if (hoverStartedAt.current === null) {
+          hoverStartedAt.current = Date.now();
+        } else if (Date.now() - hoverStartedAt.current > 250) {
+          hoverStartedAt.current = null;
+          setHits((current) => current + 1);
+          setTargetIndex((current) => current + 1);
+        }
+      }
 
-    if (Date.now() - hoverStartedAt.current > 250) {
-      hoverStartedAt.current = null;
-      setHits((current) => current + 1);
-      setTargetIndex((current) => current + 1);
-    }
-  }, [tracking.gesture, tracking.isActive, tracking.position.x, tracking.position.y]);
+      rafId = requestAnimationFrame(checkHover);
+    };
+
+    rafId = requestAnimationFrame(checkHover);
+    return () => cancelAnimationFrame(rafId);
+  }, [trackingRef]);
 
   return (
     <section className="absolute inset-0 p-10">
@@ -547,13 +540,7 @@ function ClickingExercise({ onComplete }: { onComplete: () => void }) {
   );
 }
 
-function ScrollingExercise({
-  tracking,
-  onComplete,
-}: {
-  tracking: HandTrackingState;
-  onComplete: () => void;
-}) {
+function ScrollingExercise({ onComplete }: { onComplete: () => void }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [furthestPanel, setFurthestPanel] = useState(0);
   const panels = [
@@ -572,18 +559,23 @@ function ScrollingExercise({
   }, [furthestPanel, onComplete]);
 
   useEffect(() => {
-    if (!tracking.isActive || tracking.gesture !== "fist" || !scrollRef.current) {
-      return;
-    }
-
     const container = scrollRef.current;
-    const panelHeight = Math.max(container.clientHeight, 1);
-    const currentPanel = Math.min(
-      SCROLL_PANELS_REQUIRED - 1,
-      Math.max(0, Math.round(container.scrollTop / panelHeight)),
-    );
-    setFurthestPanel((current) => Math.max(current, currentPanel));
-  }, [tracking.gesture, tracking.isActive, tracking.position.y]);
+    if (!container) return;
+
+    const updateFurthestPanel = () => {
+      const panelHeight = Math.max(container.clientHeight, 1);
+      const currentPanel = Math.min(
+        SCROLL_PANELS_REQUIRED - 1,
+        Math.max(0, Math.round(container.scrollTop / panelHeight)),
+      );
+      setFurthestPanel((current) => Math.max(current, currentPanel));
+    };
+
+    container.addEventListener("scroll", updateFurthestPanel, { passive: true });
+    updateFurthestPanel();
+
+    return () => container.removeEventListener("scroll", updateFurthestPanel);
+  }, []);
 
   return (
     <section className="absolute inset-0 p-10">

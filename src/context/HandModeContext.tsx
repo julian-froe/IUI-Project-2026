@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useMemo, useState, ReactNode } from "react";
+import React, { createContext, useCallback, useContext, useMemo, useRef, useState, ReactNode } from "react";
 
 export type HandGesture = "none" | "pinch" | "fist";
 export type HandCameraStatus = "idle" | "requesting" | "granted" | "denied";
@@ -15,10 +15,21 @@ export interface HandTrackingState {
   lastClickTarget: HTMLElement | null;
 }
 
+const initialTrackingState: HandTrackingState = {
+  position: { x: -100, y: -100 },
+  gesture: "none",
+  isActive: false,
+  cameraStatus: "idle",
+  dwellProgress: 0,
+  lastClickAt: 0,
+  lastClickTarget: null,
+};
+
 interface HandModeContextType {
   isHandModeEnabled: boolean;
   setIsHandModeEnabled: (enabled: boolean) => void;
   tracking: HandTrackingState;
+  trackingRef: React.MutableRefObject<HandTrackingState>;
   setHandTracking: (tracking: Partial<HandTrackingState>) => void;
   onboardingStatus: HandOnboardingStatus;
   onboardingStep: HandOnboardingStep;
@@ -36,18 +47,15 @@ export function HandModeProvider({ children }: { children: ReactNode }) {
   const [hasSeenOnboardingThisSession, setHasSeenOnboardingThisSession] = useState(false);
   const [onboardingStatus, setOnboardingStatus] = useState<HandOnboardingStatus>("idle");
   const [onboardingStep, setOnboardingStep] = useState<HandOnboardingStep>("point");
-  const [tracking, setTracking] = useState<HandTrackingState>({
-    position: { x: -100, y: -100 },
-    gesture: "none",
-    isActive: false,
-    cameraStatus: "idle",
-    dwellProgress: 0,
-    lastClickAt: 0,
-    lastClickTarget: null,
-  });
+  const [tracking, setTracking] = useState<HandTrackingState>(initialTrackingState);
+  const trackingRef = useRef<HandTrackingState>(initialTrackingState);
 
   const setHandTracking = useCallback((nextTracking: Partial<HandTrackingState>) => {
-    setTracking((current) => ({ ...current, ...nextTracking }));
+    setTracking((current) => {
+      const merged = { ...current, ...nextTracking };
+      trackingRef.current = merged;
+      return merged;
+    });
   }, []);
 
   const setIsHandModeEnabled = useCallback((enabled: boolean) => {
@@ -84,6 +92,7 @@ export function HandModeProvider({ children }: { children: ReactNode }) {
     isHandModeEnabled: isHandModeEnabledState,
     setIsHandModeEnabled,
     tracking,
+    trackingRef,
     setHandTracking,
     onboardingStatus,
     onboardingStep,
@@ -117,4 +126,9 @@ export function useHandMode() {
     throw new Error("useHandMode must be used within a HandModeProvider");
   }
   return context;
+}
+
+export function useHandTrackingRef() {
+  const { trackingRef } = useHandMode();
+  return trackingRef;
 }
