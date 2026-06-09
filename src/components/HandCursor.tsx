@@ -21,6 +21,7 @@ const SCROLL_MAX_DELTA = 64;
 const SCROLL_SMOOTHING = 0.24;
 const ONBOARDING_ROOT_SELECTOR = "[data-hand-onboarding]";
 const INTERACTIVE_TARGET_SELECTOR = 'button, a, [role="button"], .group';
+const HAND_MOUSE_BLOCKER_SELECTOR = "[data-hand-mouse-blocker]";
 const SNAP_LERP = 0.35;
 const CURSOR_RADIUS = 24;
 const CURSOR_CIRCUMFERENCE = 2 * Math.PI * CURSOR_RADIUS;
@@ -102,8 +103,21 @@ function getInteractiveTargetSelector(onboardingActive: boolean) {
   return 'button:not(:disabled), a, [role="button"]:not([aria-disabled="true"]), .group';
 }
 
+function isHandMouseBlocker(el: Element) {
+  return el instanceof HTMLElement && el.matches(HAND_MOUSE_BLOCKER_SELECTOR);
+}
+
+/** Hit-test that ignores the mouse-blocking overlay so hand targeting keeps working. */
+function hitTestAtPoint(x: number, y: number) {
+  for (const el of document.elementsFromPoint(x, y)) {
+    if (isHandMouseBlocker(el)) continue;
+    return el;
+  }
+  return null;
+}
+
 function isElementCenterVisible(el: HTMLElement, centerX: number, centerY: number) {
-  const elementAtCenter = document.elementFromPoint(centerX, centerY);
+  const elementAtCenter = hitTestAtPoint(centerX, centerY);
   return !elementAtCenter || elementAtCenter === el || el.contains(elementAtCenter);
 }
 
@@ -119,6 +133,7 @@ export default function HandCursor() {
   const [gesture, setGesture] = useState<HandGesture>("none");
   const [isActive, setIsActive] = useState(false);
   const [cameraStatus, setCameraStatus] = useState<HandCameraStatus>("idle");
+  const [isMouseInputActive, setIsMouseInputActive] = useState(true);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const pinchStartTime = useRef<number | null>(null);
@@ -366,7 +381,7 @@ export default function HandCursor() {
   }, []);
 
   const triggerClick = useCallback((x: number, y: number) => {
-    const rawTarget = stickyTargetRef.current || document.elementFromPoint(x, y);
+    const rawTarget = stickyTargetRef.current || hitTestAtPoint(x, y);
     const el = getActionableClickTarget(rawTarget);
 
     if (!el) {
@@ -392,29 +407,37 @@ export default function HandCursor() {
   useEffect(() => {
     if (!isHandModeEnabled) {
       document.body.classList.remove("hide-cursor");
+      setIsMouseInputActive(true);
       return;
     }
 
+    setIsMouseInputActive(true);
+
     let idleTimer = window.setTimeout(() => {
+      setIsMouseInputActive(false);
       document.body.classList.add("hide-cursor");
     }, MOUSE_IDLE_HIDE_DELAY);
 
-    const showCursorUntilIdle = () => {
+    const activateMouseUntilIdle = () => {
+      setIsMouseInputActive(true);
       document.body.classList.remove("hide-cursor");
       window.clearTimeout(idleTimer);
       idleTimer = window.setTimeout(() => {
+        setIsMouseInputActive(false);
         document.body.classList.add("hide-cursor");
       }, MOUSE_IDLE_HIDE_DELAY);
     };
 
-    window.addEventListener("mousemove", showCursorUntilIdle);
-    window.addEventListener("mousedown", showCursorUntilIdle);
+    // Capture phase so movement is detected even while the blocker overlay is on top.
+    window.addEventListener("mousemove", activateMouseUntilIdle, true);
+    window.addEventListener("mousedown", activateMouseUntilIdle, true);
 
     return () => {
       window.clearTimeout(idleTimer);
-      window.removeEventListener("mousemove", showCursorUntilIdle);
-      window.removeEventListener("mousedown", showCursorUntilIdle);
+      window.removeEventListener("mousemove", activateMouseUntilIdle, true);
+      window.removeEventListener("mousedown", activateMouseUntilIdle, true);
       document.body.classList.remove("hide-cursor");
+      setIsMouseInputActive(true);
     };
   }, [isHandModeEnabled]);
 
@@ -553,7 +576,7 @@ export default function HandCursor() {
             const deltaY = scrollVelocity.current + (targetDeltaY - scrollVelocity.current) * SCROLL_SMOOTHING;
             scrollVelocity.current = Math.abs(deltaY) < 0.2 ? 0 : deltaY;
 
-            const elementUnderCursor = document.elementFromPoint(smoothX, smoothY);
+            const elementUnderCursor = hitTestAtPoint(smoothX, smoothY);
             const scrollContainer = elementUnderCursor?.closest('.overflow-y-scroll, .overflow-auto, .overflow-y-auto, [data-scrollable="true"]');
 
             if (scrollVelocity.current !== 0) {
@@ -667,6 +690,13 @@ export default function HandCursor() {
   return (
     <>
       <video ref={videoRef} className="hidden" playsInline muted />
+      {!isMouseInputActive && (
+        <div
+          data-hand-mouse-blocker
+          className="fixed inset-0 z-[10000] cursor-none"
+          aria-hidden="true"
+        />
+      )}
       <div className="fixed inset-0 pointer-events-none z-[9999]">
         <AnimatePresence>
           {isActive && (
