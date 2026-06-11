@@ -21,6 +21,12 @@ const SCROLL_MAX_DELTA = 64;
 const SCROLL_SMOOTHING = 0.24;
 const ONBOARDING_ROOT_SELECTOR = "[data-hand-onboarding]";
 const INTERACTIVE_TARGET_SELECTOR = 'button, a, [role="button"], .group';
+const HAND_MOUSE_BLOCKER_SELECTOR = "[data-hand-mouse-blocker]";
+const SNAP_LERP = 0.35;
+const CURSOR_RADIUS = 24;
+const CURSOR_CIRCUMFERENCE = 2 * Math.PI * CURSOR_RADIUS;
+const CIRCUMFERENCE_STR = String(CURSOR_CIRCUMFERENCE);
+const CURSOR_OFFSET = 40;
 
 // --- 1-Euro Filter Implementation (Jitter Smoothing + Speed) ---
 class OneEuroFilter {
@@ -32,8 +38,8 @@ class OneEuroFilter {
   private tPrev: number | null = null;
 
   constructor(minCutoff: number = 1.0, beta: number = 0.0, dCutoff: number = 1.0) {
-    this.minCutoff = minCutoff; // Decrease to reduce slow-speed jitter
-    this.beta = beta;           // Increase to reduce high-speed lag
+    this.minCutoff = minCutoff;
+    this.beta = beta;
     this.dCutoff = dCutoff;
   }
 
@@ -55,17 +61,16 @@ class OneEuroFilter {
       return x;
     }
 
-    const tE = (t - this.tPrev) / 1000.0; // Time elapsed in seconds
+    const tE = (t - this.tPrev) / 1000.0;
     if (tE <= 0) return x;
 
-    const dx = (x - this.xPrev) / tE; // Calculate velocity
+    const dx = (x - this.xPrev) / tE;
     const alphaD = this.alpha(tE, this.dCutoff);
-    const edx = dx * alphaD + this.dxPrev * (1.0 - alphaD); // Filtered velocity
-    
-    const cutoff = this.minCutoff + this.beta * Math.abs(edx); // Dynamic cutoff based on speed
-    
+    const edx = dx * alphaD + this.dxPrev * (1.0 - alphaD);
+
+    const cutoff = this.minCutoff + this.beta * Math.abs(edx);
     const alphaP = this.alpha(tE, cutoff);
-    const filteredX = x * alphaP + this.xPrev * (1.0 - alphaP); // Filtered position
+    const filteredX = x * alphaP + this.xPrev * (1.0 - alphaP);
 
     this.xPrev = filteredX;
     this.dxPrev = edx;
@@ -91,19 +96,57 @@ function mapHandPointToViewport(x: number, y: number) {
   };
 }
 
+const PALM_LANDMARK_INDICES = [0, 5, 9, 13, 17] as const;
+
+function getPalmCenter(landmarks: Array<{ x: number; y: number }>) {
+  let x = 0;
+  let y = 0;
+  for (const index of PALM_LANDMARK_INDICES) {
+    x += landmarks[index].x;
+    y += landmarks[index].y;
+  }
+  const count = PALM_LANDMARK_INDICES.length;
+  return { x: x / count, y: y / count };
+}
+
+function getInteractiveTargetSelector(onboardingActive: boolean) {
+  if (onboardingActive) {
+    return `${ONBOARDING_ROOT_SELECTOR} button:not(:disabled), ${ONBOARDING_ROOT_SELECTOR} a, ${ONBOARDING_ROOT_SELECTOR} [role="button"]:not([aria-disabled="true"]), ${ONBOARDING_ROOT_SELECTOR} .group`;
+  }
+  return 'button:not(:disabled), a, [role="button"]:not([aria-disabled="true"]), .group';
+}
+
+function isHandMouseBlocker(el: Element) {
+  return el instanceof HTMLElement && el.matches(HAND_MOUSE_BLOCKER_SELECTOR);
+}
+
+/** Hit-test that ignores the mouse-blocking overlay so hand targeting keeps working. */
+function hitTestAtPoint(x: number, y: number) {
+  for (const el of document.elementsFromPoint(x, y)) {
+    if (isHandMouseBlocker(el)) continue;
+    return el;
+  }
+  return null;
+}
+
+function isElementCenterVisible(el: HTMLElement, centerX: number, centerY: number) {
+  const elementAtCenter = hitTestAtPoint(centerX, centerY);
+  return !elementAtCenter || elementAtCenter === el || el.contains(elementAtCenter);
+}
+
 export default function HandCursor() {
   const {
     isHandModeEnabled,
     setIsHandModeEnabled,
     setHandTracking,
+    trackingRef,
     isHandOnboardingActive,
   } = useHandMode();
-  
-  const [position, setPosition] = useState({ x: -100, y: -100 });
+
   const [gesture, setGesture] = useState<HandGesture>("none");
-  const [stickyTarget, setStickyTarget] = useState<HTMLElement | null>(null);
   const [isActive, setIsActive] = useState(false);
   const [cameraStatus, setCameraStatus] = useState<HandCameraStatus>("idle");
+  const [isMouseInputActive, setIsMouseInputActive] = useState(true);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const pinchStartTime = useRef<number | null>(null);
@@ -111,19 +154,19 @@ export default function HandCursor() {
   const scrollVelocity = useRef(0);
   const audioContextIdx = useRef<AudioContext | null>(null);
 
-  // Initialize 1-Euro Filters (Tuned for smooth UI targeting)
-  const filterX = useRef(new OneEuroFilter(0.4, 0.02)); 
+  const filterX = useRef(new OneEuroFilter(0.4, 0.02));
   const filterY = useRef(new OneEuroFilter(0.4, 0.02));
 
   const stickyTargetRef = useRef<HTMLElement | null>(null);
   const resultsRef = useRef<Results | null>(null);
   const gestureRef = useRef<HandGesture>("none");
   const onboardingActiveRef = useRef(isHandOnboardingActive);
+  const isActiveRef = useRef(false);
+  const cursorPositionRef = useRef<HTMLDivElement>(null);
+  const visualPositionRef = useRef({ x: -100, y: -100 });
+  const cachedElementsRef = useRef<HTMLElement[]>([]);
 
   const circleRef = useRef<SVGCircleElement>(null);
-
-  const radius = 24;
-  const circumference = 2 * Math.PI * radius;
 
   useEffect(() => {
     onboardingActiveRef.current = isHandOnboardingActive;
@@ -133,12 +176,75 @@ export default function HandCursor() {
     setHandTracking({ cameraStatus });
   }, [cameraStatus, setHandTracking]);
 
+  const setActiveIfChanged = useCallback((active: boolean) => {
+    if (isActiveRef.current === active) return;
+    isActiveRef.current = active;
+    setIsActive(active);
+    setHandTracking({ isActive: active });
+  }, [setHandTracking]);
+
   const updateGesture = useCallback((nextGesture: HandGesture) => {
     if (gestureRef.current !== nextGesture) {
       gestureRef.current = nextGesture;
       setGesture(nextGesture);
+      setHandTracking({ gesture: nextGesture });
+    }
+  }, [setHandTracking]);
+
+  const applyCursorTransform = useCallback((visualX: number, visualY: number) => {
+    visualPositionRef.current = { x: visualX, y: visualY };
+    if (cursorPositionRef.current) {
+      cursorPositionRef.current.style.transform =
+        `translate(${visualX - CURSOR_OFFSET}px, ${visualY - CURSOR_OFFSET}px)`;
     }
   }, []);
+
+  const updateCursorVisual = useCallback((smoothX: number, smoothY: number) => {
+    const sticky = stickyTargetRef.current;
+    let visualX = smoothX;
+    let visualY = smoothY;
+
+    if (sticky && gestureRef.current !== "fist") {
+      const rect = sticky.getBoundingClientRect();
+      const targetX = rect.left + rect.width / 2;
+      const targetY = rect.top + rect.height / 2;
+      const { x: currentX, y: currentY } = visualPositionRef.current;
+      visualX = currentX + (targetX - currentX) * SNAP_LERP;
+      visualY = currentY + (targetY - currentY) * SNAP_LERP;
+    }
+
+    applyCursorTransform(visualX, visualY);
+    trackingRef.current = {
+      ...trackingRef.current,
+      position: { x: smoothX, y: smoothY },
+      gesture: gestureRef.current,
+      isActive: true,
+      cameraStatus,
+    };
+  }, [applyCursorTransform, cameraStatus, trackingRef]);
+
+  const rebuildElementCache = useCallback(() => {
+    const selector = getInteractiveTargetSelector(onboardingActiveRef.current);
+    cachedElementsRef.current = Array.from(
+      document.querySelectorAll<HTMLElement>(selector),
+    );
+  }, []);
+
+  useEffect(() => {
+    if (!isHandModeEnabled) return;
+
+    rebuildElementCache();
+
+    const observer = new MutationObserver(rebuildElementCache);
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["disabled", "aria-disabled", "class"],
+    });
+
+    return () => observer.disconnect();
+  }, [isHandModeEnabled, rebuildElementCache]);
 
   const getAudioContext = useCallback(() => {
     if (!audioContextIdx.current) {
@@ -214,7 +320,6 @@ export default function HandCursor() {
     if (stickyTargetRef.current) {
       stickyTargetRef.current.removeAttribute("data-hand-hover");
       stickyTargetRef.current = null;
-      setStickyTarget(null);
     }
   }, []);
 
@@ -222,7 +327,8 @@ export default function HandCursor() {
     onboardingActiveRef.current = isHandOnboardingActive;
     pinchStartTime.current = null;
     clearStickyTarget();
-  }, [clearStickyTarget, isHandOnboardingActive]);
+    rebuildElementCache();
+  }, [clearStickyTarget, isHandOnboardingActive, rebuildElementCache]);
 
   const findStickyTarget = useCallback((x: number, y: number) => {
     if (gestureRef.current === "fist") {
@@ -230,12 +336,9 @@ export default function HandCursor() {
       return;
     }
 
-    const targetSelector = onboardingActiveRef.current
-      ? `${ONBOARDING_ROOT_SELECTOR} button:not(:disabled), ${ONBOARDING_ROOT_SELECTOR} a, ${ONBOARDING_ROOT_SELECTOR} [role="button"]:not([aria-disabled="true"]), ${ONBOARDING_ROOT_SELECTOR} .group`
-      : 'button:not(:disabled), a, [role="button"]:not([aria-disabled="true"]), .group';
-    const elements = document.querySelectorAll<HTMLElement>(targetSelector);
-    let closest: HTMLElement | null = null;
-    let minD = Infinity;
+    const elements = cachedElementsRef.current;
+    type Candidate = { el: HTMLElement; d: number; centerX: number; centerY: number };
+    const candidates: Candidate[] = [];
 
     if (
       stickyTargetRef.current &&
@@ -245,25 +348,32 @@ export default function HandCursor() {
       clearStickyTarget();
     }
 
-    elements.forEach((el) => {
-      const rect = el.getBoundingClientRect();
+    const rects = elements.map((el) => el.getBoundingClientRect());
+
+    elements.forEach((el, i) => {
+      const rect = rects[i];
       if (rect.width === 0 || rect.height === 0) return;
       const centerX = rect.left + rect.width / 2;
       const centerY = rect.top + rect.height / 2;
       if (centerX < 0 || centerX > window.innerWidth || centerY < 0 || centerY > window.innerHeight) return;
 
-      const elementAtCenter = document.elementFromPoint(centerX, centerY);
-      if (elementAtCenter && elementAtCenter !== el && !el.contains(elementAtCenter)) return;
-
       const d = Math.sqrt(Math.pow(x - centerX, 2) + Math.pow(y - centerY, 2));
-      // Dynamic threshold: Hysteresis logic makes it easier to stay on a target once acquired
       const threshold = el === stickyTargetRef.current ? STICKY_RELEASE_THRESHOLD : STICKY_ACQUIRE_THRESHOLD;
 
-      if (d < threshold && d < minD) {
-        minD = d;
-        closest = el;
+      if (d < threshold) {
+        candidates.push({ el, d, centerX, centerY });
       }
     });
+
+    candidates.sort((a, b) => a.d - b.d);
+
+    let closest: HTMLElement | null = null;
+    for (const candidate of candidates) {
+      if (isElementCenterVisible(candidate.el, candidate.centerX, candidate.centerY)) {
+        closest = candidate.el;
+        break;
+      }
+    }
 
     if (stickyTargetRef.current && stickyTargetRef.current !== closest) {
       stickyTargetRef.current.removeAttribute("data-hand-hover");
@@ -271,7 +381,6 @@ export default function HandCursor() {
     if (closest) closest.setAttribute("data-hand-hover", "true");
 
     stickyTargetRef.current = closest;
-    setStickyTarget(closest);
   }, [clearStickyTarget]);
 
   const getActionableClickTarget = useCallback((el: Element | null) => {
@@ -285,7 +394,7 @@ export default function HandCursor() {
   }, []);
 
   const triggerClick = useCallback((x: number, y: number) => {
-    const rawTarget = stickyTargetRef.current || document.elementFromPoint(x, y);
+    const rawTarget = stickyTargetRef.current || hitTestAtPoint(x, y);
     const el = getActionableClickTarget(rawTarget);
 
     if (!el) {
@@ -311,29 +420,37 @@ export default function HandCursor() {
   useEffect(() => {
     if (!isHandModeEnabled) {
       document.body.classList.remove("hide-cursor");
+      setIsMouseInputActive(true);
       return;
     }
 
+    setIsMouseInputActive(true);
+
     let idleTimer = window.setTimeout(() => {
+      setIsMouseInputActive(false);
       document.body.classList.add("hide-cursor");
     }, MOUSE_IDLE_HIDE_DELAY);
 
-    const showCursorUntilIdle = () => {
+    const activateMouseUntilIdle = () => {
+      setIsMouseInputActive(true);
       document.body.classList.remove("hide-cursor");
       window.clearTimeout(idleTimer);
       idleTimer = window.setTimeout(() => {
+        setIsMouseInputActive(false);
         document.body.classList.add("hide-cursor");
       }, MOUSE_IDLE_HIDE_DELAY);
     };
 
-    window.addEventListener("mousemove", showCursorUntilIdle);
-    window.addEventListener("mousedown", showCursorUntilIdle);
+    // Capture phase so movement is detected even while the blocker overlay is on top.
+    window.addEventListener("mousemove", activateMouseUntilIdle, true);
+    window.addEventListener("mousedown", activateMouseUntilIdle, true);
 
     return () => {
       window.clearTimeout(idleTimer);
-      window.removeEventListener("mousemove", showCursorUntilIdle);
-      window.removeEventListener("mousedown", showCursorUntilIdle);
+      window.removeEventListener("mousemove", activateMouseUntilIdle, true);
+      window.removeEventListener("mousedown", activateMouseUntilIdle, true);
       document.body.classList.remove("hide-cursor");
+      setIsMouseInputActive(true);
     };
   }, [isHandModeEnabled]);
 
@@ -375,8 +492,9 @@ export default function HandCursor() {
       lastHandPos.current = null;
       scrollVelocity.current = 0;
       pinchStartTime.current = null;
+      isActiveRef.current = false;
       setIsActive(false);
-      setPosition({ x: -100, y: -100 });
+      applyCursorTransform(-100, -100);
       setHandTracking({
         position: { x: -100, y: -100 },
         gesture: "none",
@@ -394,17 +512,17 @@ export default function HandCursor() {
     setHandTracking,
     updateGesture,
     clearStickyTarget,
+    applyCursorTransform,
   ]);
 
   useEffect(() => {
     if (cameraStatus !== "granted" || !videoRef.current) {
-      setIsActive(false);
+      setActiveIfChanged(false);
       filterX.current.reset();
       filterY.current.reset();
       lastHandPos.current = null;
       scrollVelocity.current = 0;
       pinchStartTime.current = null;
-      setHandTracking({ isActive: false, cameraStatus, dwellProgress: 0 });
       return;
     }
 
@@ -430,7 +548,7 @@ export default function HandCursor() {
     const updateLoop = () => {
       const results = resultsRef.current;
       if (results && results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-        setIsActive(true);
+        setActiveIfChanged(true);
         const timestamp = Date.now();
 
         const landmarks = results.multiHandLandmarks[0];
@@ -438,12 +556,9 @@ export default function HandCursor() {
         const thumbTip = landmarks[4];
         const indexTip = landmarks[8];
 
-        const midX = (thumbTip.x + indexTip.x) / 2;
-        const midY = (thumbTip.y + indexTip.y) / 2;
+        const palm = getPalmCenter(landmarks);
+        const target = mapHandPointToViewport(palm.x, palm.y);
 
-        const target = mapHandPointToViewport(midX, midY);
-        
-        // Apply 1-Euro Filter to coordinates
         const smoothX = filterX.current.filter(target.x, timestamp);
         const smoothY = filterY.current.filter(target.y, timestamp);
 
@@ -460,20 +575,19 @@ export default function HandCursor() {
             document.body.classList.add("is-fist-scrolling");
             clearStickyTarget();
           }
-          if (circleRef.current) circleRef.current.style.strokeDashoffset = String(circumference);
+          if (circleRef.current) circleRef.current.style.strokeDashoffset = CIRCUMFERENCE_STR;
           pinchStartTime.current = null;
 
           if (lastHandPos.current) {
-            // Advanced Scroll Physics Strategy (from V2)
             const handDeltaY = lastHandPos.current.y - smoothY;
             const targetDeltaY = Math.abs(handDeltaY) < SCROLL_DEADZONE
               ? 0
               : clamp(handDeltaY * SCROLL_VELOCITY_MULTIPLIER, -SCROLL_MAX_DELTA, SCROLL_MAX_DELTA);
-            
+
             const deltaY = scrollVelocity.current + (targetDeltaY - scrollVelocity.current) * SCROLL_SMOOTHING;
             scrollVelocity.current = Math.abs(deltaY) < 0.2 ? 0 : deltaY;
-            
-            const elementUnderCursor = document.elementFromPoint(smoothX, smoothY);
+
+            const elementUnderCursor = hitTestAtPoint(smoothX, smoothY);
             const scrollContainer = elementUnderCursor?.closest('.overflow-y-scroll, .overflow-auto, .overflow-y-auto, [data-scrollable="true"]');
 
             if (scrollVelocity.current !== 0) {
@@ -485,14 +599,6 @@ export default function HandCursor() {
             }
           }
           lastHandPos.current = { x: smoothX, y: smoothY };
-
-          setHandTracking({
-            position: { x: smoothX, y: smoothY },
-            gesture: "fist",
-            isActive: true,
-            cameraStatus,
-            dwellProgress: 0,
-          });
         } else if (isPinching) {
           if (gestureRef.current !== "pinch") {
             updateGesture("pinch");
@@ -500,63 +606,49 @@ export default function HandCursor() {
           }
           lastHandPos.current = null;
           scrollVelocity.current = 0;
-          let dwellProgress = 0;
 
           if (pinchStartTime.current === null) {
             pinchStartTime.current = Date.now();
           } else {
             const elapsed = Date.now() - pinchStartTime.current;
             const progress = Math.min(elapsed / DWELL_DURATION, 1);
-            dwellProgress = progress;
 
             if (circleRef.current) {
-              circleRef.current.style.strokeDashoffset = String(circumference - progress * circumference);
+              circleRef.current.style.strokeDashoffset = String(CURSOR_CIRCUMFERENCE - progress * CURSOR_CIRCUMFERENCE);
             }
 
             if (progress >= 1) {
               triggerClick(smoothX, smoothY);
               pinchStartTime.current = null;
-              if (circleRef.current) circleRef.current.style.strokeDashoffset = String(circumference);
+              if (circleRef.current) circleRef.current.style.strokeDashoffset = CIRCUMFERENCE_STR;
             }
           }
-
-          setHandTracking({
-            position: { x: smoothX, y: smoothY },
-            gesture: "pinch",
-            isActive: true,
-            cameraStatus,
-            dwellProgress,
-          });
         } else {
           if (gestureRef.current !== "none") {
             updateGesture("none");
             document.body.classList.remove("is-fist-scrolling");
           }
-          if (circleRef.current) circleRef.current.style.strokeDashoffset = String(circumference);
+          if (circleRef.current) circleRef.current.style.strokeDashoffset = CIRCUMFERENCE_STR;
           pinchStartTime.current = null;
           lastHandPos.current = null;
           scrollVelocity.current = 0;
           findStickyTarget(smoothX, smoothY);
-
-          setHandTracking({
-            position: { x: smoothX, y: smoothY },
-            gesture: "none",
-            isActive: true,
-            cameraStatus,
-            dwellProgress: 0,
-          });
         }
 
-        setPosition({ x: smoothX, y: smoothY });
+        updateCursorVisual(smoothX, smoothY);
       } else {
-        setIsActive(false);
+        setActiveIfChanged(false);
         document.body.classList.remove("is-fist-scrolling");
         filterX.current.reset();
         filterY.current.reset();
         lastHandPos.current = null;
         scrollVelocity.current = 0;
         pinchStartTime.current = null;
-        setHandTracking({ isActive: false, cameraStatus, dwellProgress: 0 });
+        trackingRef.current = {
+          ...trackingRef.current,
+          isActive: false,
+          dwellProgress: 0,
+        };
         clearStickyTarget();
       }
       rafId = requestAnimationFrame(updateLoop);
@@ -579,11 +671,12 @@ export default function HandCursor() {
     };
   }, [
     cameraStatus,
-    circumference,
     clearStickyTarget,
     findStickyTarget,
-    setHandTracking,
+    setActiveIfChanged,
+    trackingRef,
     triggerClick,
+    updateCursorVisual,
     updateGesture,
   ]);
 
@@ -605,53 +698,57 @@ export default function HandCursor() {
     );
   }
 
-  let visualX = position.x;
-  let visualY = position.y;
-
-  if (stickyTarget && gesture !== "fist") {
-    const rect = stickyTarget.getBoundingClientRect();
-    visualX = rect.left + rect.width / 2;
-    visualY = rect.top + rect.height / 2;
-  }
-
   return (
     <>
       <video ref={videoRef} className="hidden" playsInline muted />
+      {!isMouseInputActive && (
+        <div
+          data-hand-mouse-blocker
+          className="fixed inset-0 z-[10000] cursor-none"
+          aria-hidden="true"
+        />
+      )}
       <div className="fixed inset-0 pointer-events-none z-[9999]">
         <AnimatePresence>
           {isActive && (
             <motion.div
               initial={{ scale: 0, opacity: 0 }}
-              animate={{ x: visualX - 40, y: visualY - 40, scale: gesture === "fist" ? 0.8 : 1, opacity: 1 }}
+              animate={{ scale: gesture === "fist" ? 0.8 : 1, opacity: 1 }}
               exit={{ scale: 0, opacity: 0 }}
               transition={{ type: "spring", damping: 30, stiffness: 400 }}
-              className="fixed w-20 h-20 flex items-center justify-center"
+              className="fixed top-0 left-0 w-20 h-20"
             >
-              <div className={`absolute inset-0 rounded-full border-2 border-blue-500/30 backdrop-blur-[2px] transition-all duration-300 ${
-                gesture !== "none" ? "scale-110 bg-blue-500/10" : "scale-100 bg-white/5"
-              }`} />
+              <div
+                ref={cursorPositionRef}
+                className="w-20 h-20 flex items-center justify-center"
+                style={{ willChange: "transform" }}
+              >
+                <div className={`absolute inset-0 rounded-full border-2 border-blue-500/30 backdrop-blur-[2px] transition-all duration-300 ${
+                  gesture !== "none" ? "scale-110 bg-blue-500/10" : "scale-100 bg-white/5"
+                }`} />
 
-              <svg className="absolute inset-0 w-20 h-20 -rotate-90">
-                <circle
-                  ref={circleRef}
-                  cx="40"
-                  cy="40"
-                  r={radius}
-                  fill="transparent"
-                  stroke="#3b82f6"
-                  strokeWidth="4"
-                  strokeDasharray={circumference}
-                  style={{ strokeDashoffset: circumference, transition: "none" }}
-                  strokeLinecap="round"
-                />
-              </svg>
+                <svg className="absolute inset-0 w-20 h-20 -rotate-90">
+                  <circle
+                    ref={circleRef}
+                    cx="40"
+                    cy="40"
+                    r={CURSOR_RADIUS}
+                    fill="transparent"
+                    stroke="#3b82f6"
+                    strokeWidth="4"
+                    strokeDasharray={CURSOR_CIRCUMFERENCE}
+                    style={{ strokeDashoffset: CURSOR_CIRCUMFERENCE, transition: "none" }}
+                    strokeLinecap="round"
+                  />
+                </svg>
 
-              <div className={`transition-transform duration-300 ${gesture === "fist" ? "scale-125" : "scale-100"}`}>
-                {gesture === "fist" ? (
-                  <div className="w-4 h-4 bg-blue-600 rounded-sm rotate-45" />
-                ) : (
-                  <div className={`w-3 h-3 rounded-full transition-colors ${gesture === "pinch" ? "bg-blue-600 scale-150" : "bg-blue-500"}`} />
-                )}
+                <div className={`transition-transform duration-300 ${gesture === "fist" ? "scale-125" : "scale-100"}`}>
+                  {gesture === "fist" ? (
+                    <div className="w-4 h-4 bg-blue-600 rounded-sm rotate-45" />
+                  ) : (
+                    <div className={`w-3 h-3 rounded-full transition-colors ${gesture === "pinch" ? "bg-blue-600 scale-150" : "bg-blue-500"}`} />
+                  )}
+                </div>
               </div>
             </motion.div>
           )}

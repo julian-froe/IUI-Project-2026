@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import fistIconUrl from "../../assets/HandGestureIcons/Fist.svg";
 import openHandIconUrl from "../../assets/HandGestureIcons/OpenHand.svg";
 import pinchIconUrl from "../../assets/HandGestureIcons/Pinch.svg";
-import { useHandMode } from "../context/HandModeContext";
+import { useHandMode, useHandTrackingRef } from "../context/HandModeContext";
 import type { HandOnboardingStep, HandTrackingState } from "../context/HandModeContext";
 
 const PRESENT_HAND_DELAY = 2000;
@@ -25,7 +25,7 @@ const stepContent: Record<HandOnboardingStep, {
     label: "Point",
     title: "Guide the pointer",
     description: "Move your hand to steer the blue dot.",
-    helper: "Aim between your thumb and index finger.",
+    helper: "Move the center of your palm to steer the dot.",
   },
   click: {
     label: "Click",
@@ -250,19 +250,13 @@ export default function HandOnboarding() {
               className="absolute inset-0"
             >
               {onboardingStep === "point" && (
-                <PointingExercise
-                  tracking={tracking}
-                  onComplete={() => markStepComplete("point")}
-                />
+                <PointingExercise onComplete={() => markStepComplete("point")} />
               )}
               {onboardingStep === "click" && (
                 <ClickingExercise onComplete={() => markStepComplete("click")} />
               )}
               {onboardingStep === "scroll" && (
-                <ScrollingExercise
-                  tracking={tracking}
-                  onComplete={() => markStepComplete("scroll")}
-                />
+                <ScrollingExercise onComplete={() => markStepComplete("scroll")} />
               )}
             </motion.div>
           </AnimatePresence>
@@ -381,13 +375,8 @@ function StepProgress({
   );
 }
 
-function PointingExercise({
-  tracking,
-  onComplete,
-}: {
-  tracking: HandTrackingState;
-  onComplete: () => void;
-}) {
+function PointingExercise({ onComplete }: { onComplete: () => void }) {
+  const trackingRef = useHandTrackingRef();
   const [hits, setHits] = useState(0);
   const [targetIndex, setTargetIndex] = useState(0);
   const targetRef = useRef<HTMLDivElement>(null);
@@ -413,35 +402,47 @@ function PointingExercise({
   }, [hits, onComplete]);
 
   useEffect(() => {
-    const target = targetRef.current;
-    if (!target || !tracking.isActive || tracking.gesture !== "none") {
-      hoverStartedAt.current = null;
-      return;
-    }
+    if (isComplete) return;
 
-    const rect = target.getBoundingClientRect();
-    const isInside =
-      tracking.position.x >= rect.left &&
-      tracking.position.x <= rect.right &&
-      tracking.position.y >= rect.top &&
-      tracking.position.y <= rect.bottom;
+    let rafId: number;
 
-    if (!isInside) {
-      hoverStartedAt.current = null;
-      return;
-    }
+    const checkHover = () => {
+      const target = targetRef.current;
+      const { isActive, gesture, position } = trackingRef.current;
 
-    if (hoverStartedAt.current === null) {
-      hoverStartedAt.current = Date.now();
-      return;
-    }
+      if (!target || !isActive || gesture !== "none") {
+        hoverStartedAt.current = null;
+      } else {
+        const rect = target.getBoundingClientRect();
+        const isInside =
+          position.x >= rect.left &&
+          position.x <= rect.right &&
+          position.y >= rect.top &&
+          position.y <= rect.bottom;
 
-    if (Date.now() - hoverStartedAt.current > 250) {
-      hoverStartedAt.current = null;
-      setHits((current) => current + 1);
-      setTargetIndex((current) => current + 1);
-    }
-  }, [tracking.gesture, tracking.isActive, tracking.position.x, tracking.position.y]);
+        if (!isInside) {
+          hoverStartedAt.current = null;
+        } else if (hoverStartedAt.current === null) {
+          hoverStartedAt.current = Date.now();
+        } else if (Date.now() - hoverStartedAt.current > 250) {
+          hoverStartedAt.current = null;
+          setHits((current) => {
+            if (current >= POINT_TARGETS_REQUIRED) return current;
+            return current + 1;
+          });
+          setTargetIndex((current) => {
+            if (current >= POINT_TARGETS_REQUIRED - 1) return current;
+            return current + 1;
+          });
+        }
+      }
+
+      rafId = requestAnimationFrame(checkHover);
+    };
+
+    rafId = requestAnimationFrame(checkHover);
+    return () => cancelAnimationFrame(rafId);
+  }, [trackingRef, isComplete]);
 
   return (
     <section className="absolute inset-0 p-10">
@@ -455,17 +456,19 @@ function PointingExercise({
         showCompletionPulse ? completionPulseFrame : "border-black/10"
       }`}>
         <div className="absolute inset-0 opacity-[0.05] bg-[linear-gradient(90deg,#000_1px,transparent_1px),linear-gradient(#000_1px,transparent_1px)] bg-[size:48px_48px]" />
-        <motion.div
-          ref={targetRef}
-          key={targetIndex}
-          initial={{ scale: 0.4, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          transition={{ type: "spring", damping: 18, stiffness: 260 }}
-          className="absolute -translate-x-1/2 -translate-y-1/2 w-28 h-28 border-4 border-black bg-white flex items-center justify-center shadow-xl"
-          style={targetPosition}
-        >
-          <div className="w-12 h-12 rounded-full bg-black" />
-        </motion.div>
+        {!isComplete && (
+          <motion.div
+            ref={targetRef}
+            key={targetIndex}
+            initial={{ scale: 0.4, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ type: "spring", damping: 18, stiffness: 260 }}
+            className="absolute -translate-x-1/2 -translate-y-1/2 w-28 h-28 border-4 border-black bg-white flex items-center justify-center shadow-xl"
+            style={targetPosition}
+          >
+            <div className="w-12 h-12 rounded-full bg-black" />
+          </motion.div>
+        )}
       </div>
     </section>
   );
@@ -474,9 +477,10 @@ function PointingExercise({
 function ClickingExercise({ onComplete }: { onComplete: () => void }) {
   const [hits, setHits] = useState(0);
   const [activeIndex, setActiveIndex] = useState(0);
-  const buttonIds = ["one", "two", "three", "four"];
-  const activeId = buttonIds[activeIndex % buttonIds.length];
+  const practiceButtonIds = ["one", "two", "three"];
+  const displayButtonIds = ["one", "two", "three", "four"];
   const isComplete = hits >= CLICK_TARGETS_REQUIRED;
+  const activeId = isComplete ? null : practiceButtonIds[activeIndex];
   const showCompletionPulse = useCompletionPulse(isComplete);
 
   useEffect(() => {
@@ -490,12 +494,19 @@ function ClickingExercise({ onComplete }: { onComplete: () => void }) {
       const target = (event as CustomEvent<{ target?: Element }>).detail?.target;
       const clickedPracticeButton = target?.closest("[data-click-practice]");
 
-      if (!clickedPracticeButton || clickedPracticeButton.getAttribute("data-click-practice") !== activeId) {
+      if (
+        !activeId ||
+        !clickedPracticeButton ||
+        clickedPracticeButton.getAttribute("data-click-practice") !== activeId
+      ) {
         return;
       }
 
-      setHits((current) => current + 1);
-      setActiveIndex((current) => current + 1);
+      setHits((current) => {
+        if (current >= CLICK_TARGETS_REQUIRED) return current;
+        return current + 1;
+      });
+      setActiveIndex((current) => Math.min(current + 1, practiceButtonIds.length - 1));
     };
 
     window.addEventListener("handmode:click", handleHandClick);
@@ -513,20 +524,22 @@ function ClickingExercise({ onComplete }: { onComplete: () => void }) {
       <div className={`absolute inset-10 top-40 grid grid-cols-2 gap-6 border bg-white p-6 ${
         showCompletionPulse ? completionPulseFrame : "border-black/10"
       }`}>
-        {buttonIds.map((id, index) => {
-          const isActive = id === activeId;
+        {displayButtonIds.map((id, index) => {
+          const isPracticeButton = practiceButtonIds.includes(id);
+          const isActive = isPracticeButton && id === activeId;
 
           return (
             <button
               key={id}
               type="button"
-              data-click-practice={id}
+              data-click-practice={isPracticeButton ? id : undefined}
               onClick={(event) => event.preventDefault()}
+              disabled={!isPracticeButton}
               className={`group border-2 p-8 text-left transition-all data-[hand-hover=true]:scale-[1.03] data-[hand-hover=true]:shadow-2xl ${
                 isActive
                   ? "border-black bg-black text-white"
                   : "border-black/10 bg-white text-black/30"
-              }`}
+              } ${!isPracticeButton ? "cursor-default" : ""}`}
             >
               <p className="font-mono text-[10px] tracking-[0.3em] uppercase mb-5">
                 Button {index + 1}
@@ -547,13 +560,7 @@ function ClickingExercise({ onComplete }: { onComplete: () => void }) {
   );
 }
 
-function ScrollingExercise({
-  tracking,
-  onComplete,
-}: {
-  tracking: HandTrackingState;
-  onComplete: () => void;
-}) {
+function ScrollingExercise({ onComplete }: { onComplete: () => void }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [furthestPanel, setFurthestPanel] = useState(0);
   const panels = [
@@ -572,18 +579,23 @@ function ScrollingExercise({
   }, [furthestPanel, onComplete]);
 
   useEffect(() => {
-    if (!tracking.isActive || tracking.gesture !== "fist" || !scrollRef.current) {
-      return;
-    }
-
     const container = scrollRef.current;
-    const panelHeight = Math.max(container.clientHeight, 1);
-    const currentPanel = Math.min(
-      SCROLL_PANELS_REQUIRED - 1,
-      Math.max(0, Math.round(container.scrollTop / panelHeight)),
-    );
-    setFurthestPanel((current) => Math.max(current, currentPanel));
-  }, [tracking.gesture, tracking.isActive, tracking.position.y]);
+    if (!container) return;
+
+    const updateFurthestPanel = () => {
+      const panelHeight = Math.max(container.clientHeight, 1);
+      const currentPanel = Math.min(
+        SCROLL_PANELS_REQUIRED - 1,
+        Math.max(0, Math.round(container.scrollTop / panelHeight)),
+      );
+      setFurthestPanel((current) => Math.max(current, currentPanel));
+    };
+
+    container.addEventListener("scroll", updateFurthestPanel, { passive: true });
+    updateFurthestPanel();
+
+    return () => container.removeEventListener("scroll", updateFurthestPanel);
+  }, []);
 
   return (
     <section className="absolute inset-0 p-10">
