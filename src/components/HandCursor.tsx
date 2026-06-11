@@ -96,6 +96,19 @@ function mapHandPointToViewport(x: number, y: number) {
   };
 }
 
+const PALM_LANDMARK_INDICES = [0, 5, 9, 13, 17] as const;
+
+function getPalmCenter(landmarks: Array<{ x: number; y: number }>) {
+  let x = 0;
+  let y = 0;
+  for (const index of PALM_LANDMARK_INDICES) {
+    x += landmarks[index].x;
+    y += landmarks[index].y;
+  }
+  const count = PALM_LANDMARK_INDICES.length;
+  return { x: x / count, y: y / count };
+}
+
 function getInteractiveTargetSelector(onboardingActive: boolean) {
   if (onboardingActive) {
     return `${ONBOARDING_ROOT_SELECTOR} button:not(:disabled), ${ONBOARDING_ROOT_SELECTOR} a, ${ONBOARDING_ROOT_SELECTOR} [role="button"]:not([aria-disabled="true"]), ${ONBOARDING_ROOT_SELECTOR} .group`;
@@ -543,10 +556,8 @@ export default function HandCursor() {
         const thumbTip = landmarks[4];
         const indexTip = landmarks[8];
 
-        const midX = (thumbTip.x + indexTip.x) / 2;
-        const midY = (thumbTip.y + indexTip.y) / 2;
-
-        const target = mapHandPointToViewport(midX, midY);
+        const palm = getPalmCenter(landmarks);
+        const target = mapHandPointToViewport(palm.x, palm.y);
 
         const smoothX = filterX.current.filter(target.x, timestamp);
         const smoothY = filterY.current.filter(target.y, timestamp);

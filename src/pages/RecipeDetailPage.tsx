@@ -118,8 +118,8 @@ export default function RecipeDetailPage() {
             </h2>
             <ul className="space-y-6">
               {recipe.ingredients.map((ing, i) => (
-                <li key={i} className={`flex justify-between items-end border-b border-black/5 group hover:border-black transition-colors ${isHandModeEnabled ? "pb-8" : "pb-4"}`}>
-                  <span className={`font-bold uppercase transition-all group-hover:italic ${isHandModeEnabled ? "text-3xl" : "text-xl"}`}>{ing.item}</span>
+                <li key={i} className={`flex justify-between items-end border-b border-black/5 ${isHandModeEnabled ? "pb-8" : "pb-4"}`}>
+                  <span className={`font-bold uppercase ${isHandModeEnabled ? "text-3xl" : "text-xl"}`}>{ing.item}</span>
                   <span className={`font-mono opacity-40 ${isHandModeEnabled ? "text-lg" : "text-sm"}`}>{ing.amount}</span>
                 </li>
               ))}

@@ -25,7 +25,7 @@ const stepContent: Record<HandOnboardingStep, {
     label: "Point",
     title: "Guide the pointer",
     description: "Move your hand to steer the blue dot.",
-    helper: "Aim between your thumb and index finger.",
+    helper: "Move the center of your palm to steer the dot.",
   },
   click: {
     label: "Click",
@@ -402,6 +402,8 @@ function PointingExercise({ onComplete }: { onComplete: () => void }) {
   }, [hits, onComplete]);
 
   useEffect(() => {
+    if (isComplete) return;
+
     let rafId: number;
 
     const checkHover = () => {
@@ -424,8 +426,14 @@ function PointingExercise({ onComplete }: { onComplete: () => void }) {
           hoverStartedAt.current = Date.now();
         } else if (Date.now() - hoverStartedAt.current > 250) {
           hoverStartedAt.current = null;
-          setHits((current) => current + 1);
-          setTargetIndex((current) => current + 1);
+          setHits((current) => {
+            if (current >= POINT_TARGETS_REQUIRED) return current;
+            return current + 1;
+          });
+          setTargetIndex((current) => {
+            if (current >= POINT_TARGETS_REQUIRED - 1) return current;
+            return current + 1;
+          });
         }
       }
 
@@ -434,7 +442,7 @@ function PointingExercise({ onComplete }: { onComplete: () => void }) {
 
     rafId = requestAnimationFrame(checkHover);
     return () => cancelAnimationFrame(rafId);
-  }, [trackingRef]);
+  }, [trackingRef, isComplete]);
 
   return (
     <section className="absolute inset-0 p-10">
@@ -448,17 +456,19 @@ function PointingExercise({ onComplete }: { onComplete: () => void }) {
         showCompletionPulse ? completionPulseFrame : "border-black/10"
       }`}>
         <div className="absolute inset-0 opacity-[0.05] bg-[linear-gradient(90deg,#000_1px,transparent_1px),linear-gradient(#000_1px,transparent_1px)] bg-[size:48px_48px]" />
-        <motion.div
-          ref={targetRef}
-          key={targetIndex}
-          initial={{ scale: 0.4, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          transition={{ type: "spring", damping: 18, stiffness: 260 }}
-          className="absolute -translate-x-1/2 -translate-y-1/2 w-28 h-28 border-4 border-black bg-white flex items-center justify-center shadow-xl"
-          style={targetPosition}
-        >
-          <div className="w-12 h-12 rounded-full bg-black" />
-        </motion.div>
+        {!isComplete && (
+          <motion.div
+            ref={targetRef}
+            key={targetIndex}
+            initial={{ scale: 0.4, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ type: "spring", damping: 18, stiffness: 260 }}
+            className="absolute -translate-x-1/2 -translate-y-1/2 w-28 h-28 border-4 border-black bg-white flex items-center justify-center shadow-xl"
+            style={targetPosition}
+          >
+            <div className="w-12 h-12 rounded-full bg-black" />
+          </motion.div>
+        )}
       </div>
     </section>
   );
@@ -467,9 +477,10 @@ function PointingExercise({ onComplete }: { onComplete: () => void }) {
 function ClickingExercise({ onComplete }: { onComplete: () => void }) {
   const [hits, setHits] = useState(0);
   const [activeIndex, setActiveIndex] = useState(0);
-  const buttonIds = ["one", "two", "three", "four"];
-  const activeId = buttonIds[activeIndex % buttonIds.length];
+  const practiceButtonIds = ["one", "two", "three"];
+  const displayButtonIds = ["one", "two", "three", "four"];
   const isComplete = hits >= CLICK_TARGETS_REQUIRED;
+  const activeId = isComplete ? null : practiceButtonIds[activeIndex];
   const showCompletionPulse = useCompletionPulse(isComplete);
 
   useEffect(() => {
@@ -483,12 +494,19 @@ function ClickingExercise({ onComplete }: { onComplete: () => void }) {
       const target = (event as CustomEvent<{ target?: Element }>).detail?.target;
       const clickedPracticeButton = target?.closest("[data-click-practice]");
 
-      if (!clickedPracticeButton || clickedPracticeButton.getAttribute("data-click-practice") !== activeId) {
+      if (
+        !activeId ||
+        !clickedPracticeButton ||
+        clickedPracticeButton.getAttribute("data-click-practice") !== activeId
+      ) {
         return;
       }
 
-      setHits((current) => current + 1);
-      setActiveIndex((current) => current + 1);
+      setHits((current) => {
+        if (current >= CLICK_TARGETS_REQUIRED) return current;
+        return current + 1;
+      });
+      setActiveIndex((current) => Math.min(current + 1, practiceButtonIds.length - 1));
     };
 
     window.addEventListener("handmode:click", handleHandClick);
@@ -506,20 +524,22 @@ function ClickingExercise({ onComplete }: { onComplete: () => void }) {
       <div className={`absolute inset-10 top-40 grid grid-cols-2 gap-6 border bg-white p-6 ${
         showCompletionPulse ? completionPulseFrame : "border-black/10"
       }`}>
-        {buttonIds.map((id, index) => {
-          const isActive = id === activeId;
+        {displayButtonIds.map((id, index) => {
+          const isPracticeButton = practiceButtonIds.includes(id);
+          const isActive = isPracticeButton && id === activeId;
 
           return (
             <button
               key={id}
               type="button"
-              data-click-practice={id}
+              data-click-practice={isPracticeButton ? id : undefined}
               onClick={(event) => event.preventDefault()}
+              disabled={!isPracticeButton}
               className={`group border-2 p-8 text-left transition-all data-[hand-hover=true]:scale-[1.03] data-[hand-hover=true]:shadow-2xl ${
                 isActive
                   ? "border-black bg-black text-white"
                   : "border-black/10 bg-white text-black/30"
-              }`}
+              } ${!isPracticeButton ? "cursor-default" : ""}`}
             >
               <p className="font-mono text-[10px] tracking-[0.3em] uppercase mb-5">
                 Button {index + 1}
