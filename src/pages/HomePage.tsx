@@ -27,7 +27,7 @@ export default function HomePage() {
           transition={{ delay: 1 }}
           className="font-mono text-[10px] tracking-[0.4em] uppercase"
         >
-          [ {isHandModeEnabled ? "Pinch and Dwell to Select — Move quickly while pinching to Scroll" : "Use Hand to Navigate & Pinch to Select"} ]
+          [ {isHandModeEnabled ? "Pinch to Select — Fist to Scroll — Shaka 2s to Pause" : "Use Hand to Navigate & Pinch to Select"} ]
         </motion.div>
         
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-8">

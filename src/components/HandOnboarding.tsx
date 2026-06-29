@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import fistIconUrl from "../../assets/HandGestureIcons/Fist.svg";
 import openHandIconUrl from "../../assets/HandGestureIcons/OpenHand.svg";
 import pinchIconUrl from "../../assets/HandGestureIcons/Pinch.svg";
+import shakaIconUrl from "../../assets/HandGestureIcons/shaka_sign.svg";
 import { useHandMode, useHandTrackingRef } from "../context/HandModeContext";
 import type { HandOnboardingStep, HandTrackingState } from "../context/HandModeContext";
 
@@ -147,10 +148,12 @@ export default function HandOnboarding() {
           X
         </button>
 
-        <aside className="w-[34%] min-w-[340px] bg-black text-white p-8 flex flex-col">
-          <StepProgress currentStep={onboardingStep} completedSteps={completedSteps} />
+        <aside className="w-[34%] min-w-[340px] bg-black text-white p-8 flex flex-col min-h-0 overflow-hidden">
+          <div className="shrink-0">
+            <StepProgress currentStep={onboardingStep} completedSteps={completedSteps} />
+          </div>
 
-          <div className="mt-12">
+          <div className="flex-1 min-h-0 overflow-y-auto mt-8">
             <p className="font-mono text-[10px] tracking-[0.3em] uppercase text-white/50 mb-4">
               Step {currentStepIndex + 1} / {stepOrder.length}
             </p>
@@ -178,7 +181,7 @@ export default function HandOnboarding() {
             </AnimatePresence>
           </div>
 
-          <div className="mt-auto space-y-5">
+          <div className="shrink-0 space-y-5 pt-4">
             <AnimatePresence mode="wait">
               {isStepComplete && (
                 <motion.div
@@ -278,7 +281,7 @@ function PresentHandOverlay({
   const [progress, setProgress] = useState(0);
 
   useEffect(() => {
-    if (tracking.cameraStatus !== "granted" || !tracking.isActive) {
+    if (tracking.cameraStatus !== "granted" || !tracking.isShaka) {
       setProgress(0);
       return;
     }
@@ -295,7 +298,7 @@ function PresentHandOverlay({
     }, 50);
 
     return () => window.clearInterval(timer);
-  }, [tracking.cameraStatus, tracking.isActive, onReady]);
+  }, [tracking.cameraStatus, tracking.isShaka, onReady]);
 
   if (tracking.cameraStatus !== "granted") {
     return null;
@@ -321,15 +324,18 @@ function PresentHandOverlay({
         className="flex flex-col items-center text-center"
       >
         <div className="w-36 h-36 mb-8">
-          <OpenHandIcon />
+          <ShakaIcon />
         </div>
         <h1 className="font-sans font-black text-4xl md:text-5xl uppercase tracking-tighter">
-          {tracking.isActive ? "Hold it there" : "Show your hand"}
+          {tracking.isShaka ? "Hold it there" : "Show the shaka sign"}
         </h1>
-        <p className="mt-4 max-w-md text-white/70 font-sans text-sm leading-relaxed">
-          {tracking.isActive
-            ? "Great. We will start in a moment."
-            : "Present your hand to begin the quick practice round."}
+        <p className="mt-6 max-w-lg text-white/80 font-sans text-lg leading-relaxed">
+          {tracking.isShaka
+            ? "Hand tracking starts in 2 seconds."
+            : "Hold for 2 seconds to start hand tracking."}
+        </p>
+        <p className="mt-4 max-w-lg text-white/70 font-sans text-lg leading-relaxed">
+          Hold for 2 seconds again anytime to pause or resume.
         </p>
         <div className="mt-8 w-72 h-2 bg-white/20 overflow-hidden">
           <motion.div
@@ -702,6 +708,10 @@ function GestureIcon({ step }: { step: HandOnboardingStep }) {
 
 function OpenHandIcon() {
   return <HandGestureImage src={openHandIconUrl} />;
+}
+
+function ShakaIcon() {
+  return <HandGestureImage src={shakaIconUrl} />;
 }
 
 function PinchIcon() {

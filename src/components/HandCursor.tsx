@@ -23,6 +23,11 @@ const ONBOARDING_ROOT_SELECTOR = "[data-hand-onboarding]";
 const INTERACTIVE_TARGET_SELECTOR = 'button, a, [role="button"], .group';
 const HAND_MOUSE_BLOCKER_SELECTOR = "[data-hand-mouse-blocker]";
 const SNAP_LERP = 0.35;
+// Shaka sign ("hang loose"): thumb + pinky extended, three middle fingers curled.
+const SHAKA_PINKY_EXTEND_RATIO = 0.98;
+const SHAKA_THUMB_EXTEND_RATIO = 0.92;
+const SHAKA_THUMB_PINKY_SPREAD_RATIO = 0.45;
+const SHAKA_TOGGLE_DURATION = 2000;
 const CURSOR_RADIUS = 24;
 const CURSOR_CIRCUMFERENCE = 2 * Math.PI * CURSOR_RADIUS;
 const CIRCUMFERENCE_STR = String(CURSOR_CIRCUMFERENCE);
@@ -109,6 +114,40 @@ function getPalmCenter(landmarks: Array<{ x: number; y: number }>) {
   return { x: x / count, y: y / count };
 }
 
+function landmarkDistance(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+/**
+ * Detects the shaka / "hang loose" sign: thumb and pinky extended outward while
+ * the index, middle, and ring fingers are curled toward the palm.
+ */
+function isShakaSign(landmarks: Array<{ x: number; y: number }>) {
+  const wrist = landmarks[0];
+  const middleMcp = landmarks[9];
+  const palmSize = landmarkDistance(wrist, middleMcp) || 1e-6;
+
+  const distFromWrist = (index: number) => landmarkDistance(landmarks[index], wrist);
+
+  // A non-thumb finger is curled when its tip folds closer to the wrist than its PIP joint.
+  const indexCurled = distFromWrist(8) < distFromWrist(6);
+  const middleCurled = distFromWrist(12) < distFromWrist(10);
+  const ringCurled = distFromWrist(16) < distFromWrist(14);
+
+  // Pinky and thumb are extended when their tips reach at least as far from the wrist as their PIP joints.
+  const pinkyExtended = distFromWrist(20) >= distFromWrist(18) * SHAKA_PINKY_EXTEND_RATIO;
+  const thumbExtended = distFromWrist(4) >= distFromWrist(3) * SHAKA_THUMB_EXTEND_RATIO;
+
+  // Thumb and pinky spread apart, but not as wide as a full hang-loose stretch.
+  const thumbPinkySpread =
+    landmarkDistance(landmarks[4], landmarks[20]) > palmSize * SHAKA_THUMB_PINKY_SPREAD_RATIO;
+
+  return indexCurled && middleCurled && ringCurled && pinkyExtended && thumbExtended && thumbPinkySpread;
+}
+
 function getInteractiveTargetSelector(onboardingActive: boolean) {
   if (onboardingActive) {
     return `${ONBOARDING_ROOT_SELECTOR} button:not(:disabled), ${ONBOARDING_ROOT_SELECTOR} a, ${ONBOARDING_ROOT_SELECTOR} [role="button"]:not([aria-disabled="true"]), ${ONBOARDING_ROOT_SELECTOR} .group`;
@@ -138,7 +177,10 @@ export default function HandCursor() {
   const {
     isHandModeEnabled,
     setIsHandModeEnabled,
+    isTrackingPaused,
+    setTrackingPaused,
     setHandTracking,
+    tracking,
     trackingRef,
     isHandOnboardingActive,
   } = useHandMode();
@@ -162,6 +204,10 @@ export default function HandCursor() {
   const gestureRef = useRef<HandGesture>("none");
   const onboardingActiveRef = useRef(isHandOnboardingActive);
   const isActiveRef = useRef(false);
+  const isShakaRef = useRef(false);
+  const isTrackingPausedRef = useRef(false);
+  const shakaHoldStartRef = useRef<number | null>(null);
+  const shakaHoldProgressRef = useRef(0);
   const cursorPositionRef = useRef<HTMLDivElement>(null);
   const visualPositionRef = useRef({ x: -100, y: -100 });
   const cachedElementsRef = useRef<HTMLElement[]>([]);
@@ -173,6 +219,10 @@ export default function HandCursor() {
   }, [isHandOnboardingActive]);
 
   useEffect(() => {
+    isTrackingPausedRef.current = isTrackingPaused;
+  }, [isTrackingPaused]);
+
+  useEffect(() => {
     setHandTracking({ cameraStatus });
   }, [cameraStatus, setHandTracking]);
 
@@ -181,6 +231,18 @@ export default function HandCursor() {
     isActiveRef.current = active;
     setIsActive(active);
     setHandTracking({ isActive: active });
+  }, [setHandTracking]);
+
+  const setShakaIfChanged = useCallback((shaka: boolean) => {
+    if (isShakaRef.current === shaka) return;
+    isShakaRef.current = shaka;
+    setHandTracking({ isShaka: shaka });
+  }, [setHandTracking]);
+
+  const setShakaHoldProgressIfChanged = useCallback((progress: number) => {
+    if (shakaHoldProgressRef.current === progress) return;
+    shakaHoldProgressRef.current = progress;
+    setHandTracking({ shakaHoldProgress: progress });
   }, [setHandTracking]);
 
   const updateGesture = useCallback((nextGesture: HandGesture) => {
@@ -323,6 +385,35 @@ export default function HandCursor() {
     }
   }, []);
 
+  const enterPausedState = useCallback(() => {
+    setTrackingPaused(true);
+    isTrackingPausedRef.current = true;
+    document.body.classList.remove("is-fist-scrolling");
+    updateGesture("none");
+    clearStickyTarget();
+    filterX.current.reset();
+    filterY.current.reset();
+    lastHandPos.current = null;
+    scrollVelocity.current = 0;
+    pinchStartTime.current = null;
+    isActiveRef.current = false;
+    setIsActive(false);
+    setHandTracking({ isActive: false, gesture: "none", dwellProgress: 0, shakaHoldProgress: 0 });
+    shakaHoldProgressRef.current = 0;
+    shakaHoldStartRef.current = null;
+    document.body.classList.remove("hide-cursor");
+    setIsMouseInputActive(true);
+  }, [clearStickyTarget, setHandTracking, setTrackingPaused, updateGesture]);
+
+  const resumeTracking = useCallback(() => {
+    setTrackingPaused(false);
+    isTrackingPausedRef.current = false;
+    shakaHoldStartRef.current = null;
+    setShakaHoldProgressIfChanged(0);
+    filterX.current.reset();
+    filterY.current.reset();
+  }, [setShakaHoldProgressIfChanged, setTrackingPaused]);
+
   useEffect(() => {
     onboardingActiveRef.current = isHandOnboardingActive;
     pinchStartTime.current = null;
@@ -418,7 +509,7 @@ export default function HandCursor() {
   }, [getActionableClickTarget, playErrorSound, playSuccessSound, setHandTracking]);
 
   useEffect(() => {
-    if (!isHandModeEnabled) {
+    if (!isHandModeEnabled || isTrackingPaused) {
       document.body.classList.remove("hide-cursor");
       setIsMouseInputActive(true);
       return;
@@ -452,7 +543,7 @@ export default function HandCursor() {
       document.body.classList.remove("hide-cursor");
       setIsMouseInputActive(true);
     };
-  }, [isHandModeEnabled]);
+  }, [isHandModeEnabled, isTrackingPaused]);
 
   useEffect(() => {
     if (isHandModeEnabled && cameraStatus === "idle") {
@@ -493,12 +584,19 @@ export default function HandCursor() {
       scrollVelocity.current = 0;
       pinchStartTime.current = null;
       isActiveRef.current = false;
+      isShakaRef.current = false;
+      isTrackingPausedRef.current = false;
+      shakaHoldStartRef.current = null;
+      shakaHoldProgressRef.current = 0;
+      setTrackingPaused(false);
       setIsActive(false);
       applyCursorTransform(-100, -100);
       setHandTracking({
         position: { x: -100, y: -100 },
         gesture: "none",
         isActive: false,
+        isShaka: false,
+        shakaHoldProgress: 0,
         cameraStatus: "idle",
         dwellProgress: 0,
         lastClickAt: 0,
@@ -509,6 +607,7 @@ export default function HandCursor() {
     isHandModeEnabled,
     cameraStatus,
     setIsHandModeEnabled,
+    setTrackingPaused,
     setHandTracking,
     updateGesture,
     clearStickyTarget,
@@ -548,7 +647,6 @@ export default function HandCursor() {
     const updateLoop = () => {
       const results = resultsRef.current;
       if (results && results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-        setActiveIfChanged(true);
         const timestamp = Date.now();
 
         const landmarks = results.multiHandLandmarks[0];
@@ -562,14 +660,60 @@ export default function HandCursor() {
         const smoothX = filterX.current.filter(target.x, timestamp);
         const smoothY = filterY.current.filter(target.y, timestamp);
 
-        const pinchDist = Math.sqrt(Math.pow(thumbTip.x - indexTip.x, 2) + Math.pow(thumbTip.y - indexTip.y, 2));
-        const isPinching = pinchDist < PINCH_THRESHOLD;
+        const isShaka = isShakaSign(landmarks);
+        setShakaIfChanged(isShaka);
 
-        const fingerTips = [indexTip, landmarks[12], landmarks[16], landmarks[20]];
-        const avgTipDist = fingerTips.reduce((acc, tip) => acc + Math.sqrt(Math.pow(tip.x - wrist.x, 2) + Math.pow(tip.y - wrist.y, 2)), 0) / 4;
-        const isFist = avgTipDist < FIST_THRESHOLD && !isPinching;
+        const canTogglePause = !onboardingActiveRef.current;
 
-        if (isFist) {
+        if (canTogglePause) {
+          if (isShaka) {
+            if (shakaHoldStartRef.current === null) {
+              shakaHoldStartRef.current = timestamp;
+            }
+            const elapsed = timestamp - shakaHoldStartRef.current;
+            const holdProgress = Math.min(elapsed / SHAKA_TOGGLE_DURATION, 1);
+            setShakaHoldProgressIfChanged(holdProgress);
+
+            if (holdProgress >= 1) {
+              shakaHoldStartRef.current = null;
+              setShakaHoldProgressIfChanged(0);
+              if (isTrackingPausedRef.current) {
+                resumeTracking();
+              } else {
+                enterPausedState();
+              }
+            }
+          } else {
+            shakaHoldStartRef.current = null;
+            setShakaHoldProgressIfChanged(0);
+          }
+        } else {
+          shakaHoldStartRef.current = null;
+          setShakaHoldProgressIfChanged(0);
+        }
+
+        if (isTrackingPausedRef.current) {
+          setActiveIfChanged(false);
+          if (circleRef.current) circleRef.current.style.strokeDashoffset = CIRCUMFERENCE_STR;
+          trackingRef.current = {
+            ...trackingRef.current,
+            position: { x: smoothX, y: smoothY },
+            isShaka,
+            isActive: false,
+            gesture: "none",
+            cameraStatus,
+          };
+        } else {
+          setActiveIfChanged(true);
+
+          const pinchDist = Math.sqrt(Math.pow(thumbTip.x - indexTip.x, 2) + Math.pow(thumbTip.y - indexTip.y, 2));
+          const isPinching = pinchDist < PINCH_THRESHOLD;
+
+          const fingerTips = [indexTip, landmarks[12], landmarks[16], landmarks[20]];
+          const avgTipDist = fingerTips.reduce((acc, tip) => acc + Math.sqrt(Math.pow(tip.x - wrist.x, 2) + Math.pow(tip.y - wrist.y, 2)), 0) / 4;
+          const isFist = avgTipDist < FIST_THRESHOLD && !isPinching;
+
+          if (isFist) {
           if (gestureRef.current !== "fist") {
             updateGesture("fist");
             document.body.classList.add("is-fist-scrolling");
@@ -635,9 +779,13 @@ export default function HandCursor() {
           findStickyTarget(smoothX, smoothY);
         }
 
-        updateCursorVisual(smoothX, smoothY);
+          updateCursorVisual(smoothX, smoothY);
+        }
       } else {
         setActiveIfChanged(false);
+        setShakaIfChanged(false);
+        shakaHoldStartRef.current = null;
+        setShakaHoldProgressIfChanged(0);
         document.body.classList.remove("is-fist-scrolling");
         filterX.current.reset();
         filterY.current.reset();
@@ -647,6 +795,8 @@ export default function HandCursor() {
         trackingRef.current = {
           ...trackingRef.current,
           isActive: false,
+          isShaka: false,
+          shakaHoldProgress: 0,
           dwellProgress: 0,
         };
         clearStickyTarget();
@@ -672,8 +822,12 @@ export default function HandCursor() {
   }, [
     cameraStatus,
     clearStickyTarget,
+    enterPausedState,
     findStickyTarget,
+    resumeTracking,
     setActiveIfChanged,
+    setShakaHoldProgressIfChanged,
+    setShakaIfChanged,
     trackingRef,
     triggerClick,
     updateCursorVisual,
@@ -701,7 +855,7 @@ export default function HandCursor() {
   return (
     <>
       <video ref={videoRef} className="hidden" playsInline muted />
-      {!isMouseInputActive && (
+      {!isMouseInputActive && !isTrackingPaused && (
         <div
           data-hand-mouse-blocker
           className="fixed inset-0 z-[10000] cursor-none"
@@ -710,7 +864,7 @@ export default function HandCursor() {
       )}
       <div className="fixed inset-0 pointer-events-none z-[9999]">
         <AnimatePresence>
-          {isActive && (
+          {isActive && !isTrackingPaused && (
             <motion.div
               initial={{ scale: 0, opacity: 0 }}
               animate={{ scale: gesture === "fist" ? 0.8 : 1, opacity: 1 }}
@@ -755,15 +909,44 @@ export default function HandCursor() {
         </AnimatePresence>
       </div>
 
-      <div className="fixed bottom-6 right-6 z-[9999] pointer-events-none bg-white/90 backdrop-blur-md border border-blue-100 px-4 py-2 rounded-none font-mono text-[9px] tracking-widest uppercase flex flex-col items-start gap-1 shadow-lg">
+      <div className="fixed bottom-6 right-6 z-[9999] pointer-events-none bg-white/90 backdrop-blur-md border border-blue-100 px-4 py-2 rounded-none font-mono text-[9px] tracking-widest uppercase flex flex-col items-start gap-1 shadow-lg min-w-[200px]">
         <div className="flex items-center gap-3">
-          <div className={`w-2 h-2 rounded-full ${isActive ? "bg-blue-500" : "bg-red-500 animate-pulse"}`} />
-          {isActive ? "System Ready" : "Initializing..."}
+          <div className={`w-2 h-2 rounded-full ${
+            isTrackingPaused
+              ? "bg-amber-500"
+              : isActive
+                ? "bg-blue-500"
+                : "bg-red-500 animate-pulse"
+          }`} />
+          {isTrackingPaused
+            ? "Hand Paused"
+            : isActive
+              ? "System Ready"
+              : "Initializing..."}
         </div>
-        {isActive && (
+        {isTrackingPaused ? (
+          <div className="text-[8px] opacity-60 normal-case tracking-normal">
+            Use mouse or hold shaka 2s to resume
+          </div>
+        ) : isActive && (
           <div className="text-[8px] opacity-60">
             {gesture === "fist" ? "Action: Scrolling" : gesture === "pinch" ? "Action: Selecting" : "Status: Tracking"}
           </div>
+        )}
+        {tracking.shakaHoldProgress > 0 && !isHandOnboardingActive && (
+          <>
+            <div className="text-[8px] opacity-80 normal-case tracking-normal mt-1">
+              {isTrackingPaused
+                ? "Hold shaka — resuming in 2 seconds"
+                : "Hold shaka — pausing in 2 seconds"}
+            </div>
+            <div className="w-full h-1 bg-blue-100 overflow-hidden mt-0.5">
+              <div
+                className="h-full bg-blue-500 transition-none"
+                style={{ width: `${Math.round(tracking.shakaHoldProgress * 100)}%` }}
+              />
+            </div>
+          </>
         )}
       </div>
     </>

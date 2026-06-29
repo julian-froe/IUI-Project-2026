@@ -9,6 +9,8 @@ export interface HandTrackingState {
   position: { x: number; y: number };
   gesture: HandGesture;
   isActive: boolean;
+  isShaka: boolean;
+  shakaHoldProgress: number;
   cameraStatus: HandCameraStatus;
   dwellProgress: number;
   lastClickAt: number;
@@ -19,6 +21,8 @@ const initialTrackingState: HandTrackingState = {
   position: { x: -100, y: -100 },
   gesture: "none",
   isActive: false,
+  isShaka: false,
+  shakaHoldProgress: 0,
   cameraStatus: "idle",
   dwellProgress: 0,
   lastClickAt: 0,
@@ -28,6 +32,8 @@ const initialTrackingState: HandTrackingState = {
 interface HandModeContextType {
   isHandModeEnabled: boolean;
   setIsHandModeEnabled: (enabled: boolean) => void;
+  isTrackingPaused: boolean;
+  setTrackingPaused: (paused: boolean) => void;
   tracking: HandTrackingState;
   trackingRef: React.MutableRefObject<HandTrackingState>;
   setHandTracking: (tracking: Partial<HandTrackingState>) => void;
@@ -47,8 +53,13 @@ export function HandModeProvider({ children }: { children: ReactNode }) {
   const [hasSeenOnboardingThisSession, setHasSeenOnboardingThisSession] = useState(false);
   const [onboardingStatus, setOnboardingStatus] = useState<HandOnboardingStatus>("idle");
   const [onboardingStep, setOnboardingStep] = useState<HandOnboardingStep>("point");
+  const [isTrackingPaused, setIsTrackingPausedState] = useState(false);
   const [tracking, setTracking] = useState<HandTrackingState>(initialTrackingState);
   const trackingRef = useRef<HandTrackingState>(initialTrackingState);
+
+  const setTrackingPaused = useCallback((paused: boolean) => {
+    setIsTrackingPausedState(paused);
+  }, []);
 
   const setHandTracking = useCallback((nextTracking: Partial<HandTrackingState>) => {
     setTracking((current) => {
@@ -63,6 +74,12 @@ export function HandModeProvider({ children }: { children: ReactNode }) {
 
     if (!enabled) {
       setOnboardingStatus("idle");
+      setIsTrackingPausedState(false);
+      setTracking((current) => {
+        const reset = { ...current, shakaHoldProgress: 0 };
+        trackingRef.current = reset;
+        return reset;
+      });
       return;
     }
 
@@ -91,6 +108,8 @@ export function HandModeProvider({ children }: { children: ReactNode }) {
   const value = useMemo(() => ({
     isHandModeEnabled: isHandModeEnabledState,
     setIsHandModeEnabled,
+    isTrackingPaused,
+    setTrackingPaused,
     tracking,
     trackingRef,
     setHandTracking,
@@ -104,6 +123,8 @@ export function HandModeProvider({ children }: { children: ReactNode }) {
   }), [
     isHandModeEnabledState,
     setIsHandModeEnabled,
+    isTrackingPaused,
+    setTrackingPaused,
     tracking,
     setHandTracking,
     onboardingStatus,
