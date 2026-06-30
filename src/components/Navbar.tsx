@@ -37,7 +37,7 @@ export default function Navbar() {
         </div>
         <span className="font-sans font-black text-2xl tracking-tighter uppercase">Noir Cuisine</span>
       </Link>
-      
+
       <div className="flex gap-4 md:gap-8 items-center font-sans font-medium text-xs tracking-widest uppercase">
         <button 
           type="button"

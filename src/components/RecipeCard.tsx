@@ -20,17 +20,17 @@ export default function RecipeCard({ recipe }: RecipeCardProps) {
           className="w-full h-full object-cover group-data-[hand-hover=true]:scale-105"
         />
       </div>
-      
+
       <div className="mt-6 space-y-3 px-1">
         <div className="flex justify-between items-baseline">
           <span className="font-mono text-[10px] tracking-widest uppercase opacity-40">{recipe.difficulty} — {recipe.prepTime}</span>
           <ArrowRight className="w-4 h-4 opacity-0 -translate-x-4 group-hover:opacity-100 group-hover:translate-x-0 group-data-[hand-hover=true]:opacity-100 group-data-[hand-hover=true]:translate-x-0 transition-all duration-300" />
         </div>
-        
+
         <h3 className="font-sans font-bold text-4xl tracking-tighter uppercase leading-none group-hover:italic group-data-[hand-hover=true]:italic transition-all">
           {recipe.title}
         </h3>
-        
+
         <p className="font-sans text-sm text-neutral-500 leading-relaxed max-w-sm">
           {recipe.description}
         </p>

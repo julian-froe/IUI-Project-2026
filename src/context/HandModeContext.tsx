@@ -97,9 +97,7 @@ export function HandModeProvider({ children }: { children: ReactNode }) {
   const completeOnboarding = useCallback(() => {
     setHasSeenOnboardingThisSession(true);
     setOnboardingStatus("idle");
-  }, []);
-
-  // Modified: Keep isHandModeEnabledState as true, but dismiss the onboarding screens
+  }, []);
   const cancelOnboarding = useCallback(() => {
     setHasSeenOnboardingThisSession(true);
     setOnboardingStatus("idle");
