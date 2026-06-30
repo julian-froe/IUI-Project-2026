@@ -706,6 +706,17 @@ export default function HandCursor() {
         } else {
           setActiveIfChanged(true);
 
+          if (isShaka) {
+            if (gestureRef.current !== "none") {
+              updateGesture("none");
+              document.body.classList.remove("is-fist-scrolling");
+            }
+            if (circleRef.current) circleRef.current.style.strokeDashoffset = CIRCUMFERENCE_STR;
+            pinchStartTime.current = null;
+            lastHandPos.current = null;
+            scrollVelocity.current = 0;
+            clearStickyTarget();
+          } else {
           const pinchDist = Math.sqrt(Math.pow(thumbTip.x - indexTip.x, 2) + Math.pow(thumbTip.y - indexTip.y, 2));
           const isPinching = pinchDist < PINCH_THRESHOLD;
 
@@ -778,6 +789,8 @@ export default function HandCursor() {
           scrollVelocity.current = 0;
           findStickyTarget(smoothX, smoothY);
         }
+
+          }
 
           updateCursorVisual(smoothX, smoothY);
         }
