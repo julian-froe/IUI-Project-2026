@@ -3,8 +3,8 @@ import { useEffect } from "react";
 import HomePage from "./pages/HomePage";
 import RecipeDetailPage from "./pages/RecipeDetailPage";
 import Navbar from "./components/Navbar";
-import HandCursor from "./components/HandCursor";
-import HandOnboarding from "./components/HandOnboarding";
+import HandCursor from "./components/hand-cursor/HandCursor";
+import HandOnboarding from "./components/hand-onboarding/HandOnboarding";
 import { HandModeProvider } from "./context/HandModeContext";
 
 function ScrollToTop() {

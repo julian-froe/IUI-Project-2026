@@ -20,7 +20,7 @@ export default function HomePage() {
         >
           Taste in <br /> <span className="italic">Black&White.</span>
         </motion.h1>
-        
+
         {isHandModeEnabled && (
           <motion.div
             initial={{ opacity: 0 }}
@@ -31,12 +31,12 @@ export default function HomePage() {
             [ Pinch to Select — Fist to Scroll — Shaka 2s to Pause ]
           </motion.div>
         )}
-        
+
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-8">
           <p className="max-w-md font-sans text-lg text-neutral-600 leading-tight">
             Minimalist recipes for the maximalist palate. Curated dishes stripped of color, defined by texture and depth. Welcome to Noir Cuisine.
           </p>
-          
+
           <div className="flex gap-4">
             <button 
               onClick={scrollToRecipes}

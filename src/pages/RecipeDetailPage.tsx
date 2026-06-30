@@ -71,7 +71,7 @@ export default function RecipeDetailPage() {
           <Link to="/" className={`inline-flex items-center gap-2 mb-12 hover:line-through uppercase font-bold tracking-widest transition-all shadow-xl ${isHandModeEnabled ? "text-lg px-8 py-4 bg-white text-black" : "text-xs px-4 py-2 bg-white/80 backdrop-blur-md text-black"}`}>
             <ArrowLeft className="w-4 h-4" /> Go Back
           </Link>
-          
+
           <motion.div
             initial={{ opacity: 0, y: 40 }}
             animate={{ opacity: 1, y: 0 }}
@@ -85,13 +85,13 @@ export default function RecipeDetailPage() {
                 <BarChart className="w-3 h-3" /> {recipe.difficulty}
               </span>
             </div>
-            
+
             <h1 className="text-[12vw] md:text-[8vw] leading-[0.8] font-black uppercase tracking-tighter mb-8 max-w-4xl text-white drop-shadow-lg">
               {recipe.title}
             </h1>
           </motion.div>
         </div>
-        
+
         <motion.div 
           animate={{ y: [0, 10, 0] }}
           transition={{ repeat: Infinity, duration: 2 }}
@@ -150,7 +150,7 @@ export default function RecipeDetailPage() {
             />
             <div className="absolute inset-0 bg-gradient-to-t md:bg-gradient-to-r from-black/80 via-transparent to-transparent md:hidden" />
           </div>
-          
+
           <div className="w-full flex-1 md:w-[50vw] md:h-full flex flex-col justify-center px-8 py-8 md:px-24 bg-white text-black relative z-10 no-scrollbar">
             <span className="text-[12vw] md:text-[8vw] font-black tracking-tighter opacity-10 leading-none mb-8">
               {step.id < 10 ? `0${step.id}` : step.id}
