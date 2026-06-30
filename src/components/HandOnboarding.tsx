@@ -153,7 +153,7 @@ export default function HandOnboarding() {
             <StepProgress currentStep={onboardingStep} completedSteps={completedSteps} />
           </div>
 
-          <div className="flex-1 min-h-0 overflow-y-auto mt-8">
+          <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar mt-8">
             <p className="font-mono text-[10px] tracking-[0.3em] uppercase text-white/50 mb-4">
               Step {currentStepIndex + 1} / {stepOrder.length}
             </p>
